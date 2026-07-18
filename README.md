@@ -23,8 +23,8 @@ that data through an API and a web UI.
 | Component | Description | Status |
 |-----------|-------------|--------|
 | `nightwatcherd` | Daemon: polls SQM(s) at a configurable interval, records readings, serves the API | Skeleton (M0) |
-| SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol | SQM-LE done (M1); USB serial pending |
-| `sqmctl` | CLI to query/configure a single SQM | Done (M1) |
+| SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol; subnet discovery | SQM-LE + discovery done (M1); USB serial pending |
+| `sqmctl` | CLI to discover and query a single SQM | Done (M1) |
 | Database | MariaDB/MySQL store for readings + configuration/calibration history | Planned (M2) |
 | REST API | Embedded HTTP server (JSON) to query and configure | Planned (M4) |
 | Web UI | Status dashboard, configuration, query, time-series graph | Planned (M5) |
@@ -56,7 +56,24 @@ cmake --build build-arm64 --parallel
 
 ## Talking to an SQM (`sqmctl`)
 
-`sqmctl` queries a single meter over TCP (SQM-LE, default port 10001):
+`sqmctl` finds SQM-LE units on the network and queries them over TCP.
+
+### Finding a unit on the network
+
+If the SQM-LE picked up an unknown IP address via DHCP, scan its subnet. Each host is
+probed on port 10001 and confirmed with a unit-info (`ix`) query, so only real SQMs are
+reported:
+
+```sh
+sqmctl discover 192.168.1.0/24
+# Found 1 SQM(s):
+#   192.168.1.73:10001  serial=00000413 model=3 feature=1 protocol=2
+```
+
+Options: `--port N` (default 10001), `--timeout MS` (default 700), `--concurrency N`
+(default 128). A /24 scans in roughly a second.
+
+### Querying a unit
 
 ```sh
 sqmctl --tcp 192.168.1.50:10001 info    # unit info        (ix)

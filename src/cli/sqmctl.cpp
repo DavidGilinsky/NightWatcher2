@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // Author:        David Gilinsky
 // File:          src/cli/sqmctl.cpp
-// Purpose:       Command-line tool to query a single SQM over TCP (SQM-LE):
-//                info (ix), read (rx), unaveraged (ux), cal (cx).
+// Purpose:       Command-line tool for a Unihedron SQM: discover units on a
+//                subnet, or query one over TCP (info/read/unaveraged/cal).
 // Created:       2026-07-18
 // Last Modified: 2026-07-18
 // Version:       0.1.0
@@ -13,7 +13,9 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "discovery.hpp"
 #include "nightwatcher/version.hpp"
 #include "protocol.hpp"
 #include "sqm_device.hpp"
@@ -25,14 +27,19 @@ using namespace nightwatcher::sqm;
 
 void usage(const char* argv0) {
     std::cout
-        << "sqmctl " << NIGHTWATCHER_VERSION << " \xe2\x80\x94 query a Unihedron SQM\n\n"
-        << "Usage: " << argv0 << " --tcp HOST[:PORT] <command> [--timeout MS]\n\n"
-        << "Commands:\n"
+        << "sqmctl " << NIGHTWATCHER_VERSION << " \xe2\x80\x94 Unihedron SQM tool\n\n"
+        << "Usage:\n"
+        << "  " << argv0 << " discover <CIDR> [--port N] [--timeout MS] [--concurrency N]\n"
+        << "  " << argv0 << " --tcp HOST[:PORT] <command> [--timeout MS]\n\n"
+        << "Query commands:\n"
         << "  info         Unit information (ix)\n"
         << "  read         Averaged reading (rx)\n"
         << "  unaveraged   Unaveraged reading (ux)\n"
         << "  cal          Calibration information (cx)\n\n"
-        << "The default port is 10001 (SQM-LE). --timeout defaults to 5000 ms.\n";
+        << "discover scans a subnet for SQM-LE units, e.g.:\n"
+        << "  " << argv0 << " discover 192.168.1.0/24\n\n"
+        << "Default port is 10001 (SQM-LE). Query timeout defaults to 5000 ms;\n"
+        << "discovery timeout defaults to 700 ms with 128-way concurrency.\n";
 }
 
 void print_reading(const Reading& r) {
@@ -45,44 +52,31 @@ void print_reading(const Reading& r) {
     if (!r.serial.empty()) std::cout << "serial        : " << r.serial << "\n";
 }
 
-}  // namespace
-
-int main(int argc, char** argv) {
-    std::string endpoint;
-    std::string command;
-    int timeout_ms = 5000;
-
-    for (int i = 1; i < argc; ++i) {
-        const std::string a = argv[i];
-        if (a == "-h" || a == "--help") {
-            usage(argv[0]);
-            return 0;
-        } else if (a == "--version") {
-            std::cout << "sqmctl " << NIGHTWATCHER_VERSION << "\n";
-            return 0;
-        } else if (a == "--tcp") {
-            if (++i >= argc) { std::cerr << "error: --tcp requires HOST[:PORT]\n"; return 2; }
-            endpoint = argv[i];
-        } else if (a == "--timeout") {
-            if (++i >= argc) { std::cerr << "error: --timeout requires MS\n"; return 2; }
-            timeout_ms = std::atoi(argv[i]);
-        } else if (!a.empty() && a[0] == '-') {
-            std::cerr << "error: unknown option '" << a << "'\n";
-            return 2;
-        } else if (command.empty()) {
-            command = a;
-        } else {
-            std::cerr << "error: unexpected argument '" << a << "'\n";
-            return 2;
+int run_discover(const std::string& cidr, uint16_t port, int timeout_ms, int concurrency) {
+    try {
+        const auto hosts = cidr_hosts(cidr);
+        std::cerr << "scanning " << hosts.size() << " hosts on " << cidr << " (port " << port
+                  << ", timeout " << timeout_ms << " ms, concurrency " << concurrency
+                  << ") ...\n";
+        const auto found = discover(cidr, port, timeout_ms, concurrency);
+        if (found.empty()) {
+            std::cout << "No SQM found on " << cidr << "\n";
+            return 1;
         }
+        std::cout << "Found " << found.size() << " SQM(s):\n";
+        for (const auto& d : found) {
+            std::cout << "  " << d.ip << ":" << port << "  serial=" << d.info.serial
+                      << " model=" << d.info.model << " feature=" << d.info.feature
+                      << " protocol=" << d.info.protocol << "\n";
+        }
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
     }
+}
 
-    if (endpoint.empty() || command.empty()) {
-        usage(argv[0]);
-        return 2;
-    }
-
-    // Parse HOST[:PORT]; default to the SQM-LE port 10001.
+int run_query(const std::string& endpoint, const std::string& command, int timeout_ms) {
     std::string host = endpoint;
     uint16_t port = 10001;
     const auto colon = endpoint.rfind(':');
@@ -116,7 +110,6 @@ int main(int argc, char** argv) {
                       << "temp @ dark cal   : " << c.temp_dark_c << " C\n";
         } else {
             std::cerr << "error: unknown command '" << command << "'\n";
-            usage(argv[0]);
             return 2;
         }
         return 0;
@@ -124,4 +117,64 @@ int main(int argc, char** argv) {
         std::cerr << "error: " << e.what() << "\n";
         return 1;
     }
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    std::string endpoint;
+    std::vector<std::string> positionals;
+    int timeout_ms = -1;   // -1 => use a per-mode default
+    uint16_t port = 10001;
+    int concurrency = 128;
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string a = argv[i];
+        if (a == "-h" || a == "--help") {
+            usage(argv[0]);
+            return 0;
+        } else if (a == "--version") {
+            std::cout << "sqmctl " << NIGHTWATCHER_VERSION << "\n";
+            return 0;
+        } else if (a == "--tcp") {
+            if (++i >= argc) { std::cerr << "error: --tcp requires HOST[:PORT]\n"; return 2; }
+            endpoint = argv[i];
+        } else if (a == "--timeout") {
+            if (++i >= argc) { std::cerr << "error: --timeout requires MS\n"; return 2; }
+            timeout_ms = std::atoi(argv[i]);
+        } else if (a == "--port") {
+            if (++i >= argc) { std::cerr << "error: --port requires N\n"; return 2; }
+            port = static_cast<uint16_t>(std::atoi(argv[i]));
+        } else if (a == "--concurrency") {
+            if (++i >= argc) { std::cerr << "error: --concurrency requires N\n"; return 2; }
+            concurrency = std::atoi(argv[i]);
+        } else if (!a.empty() && a[0] == '-') {
+            std::cerr << "error: unknown option '" << a << "'\n";
+            return 2;
+        } else {
+            positionals.push_back(a);
+        }
+    }
+
+    if (positionals.empty()) {
+        usage(argv[0]);
+        return 2;
+    }
+
+    const std::string& command = positionals[0];
+
+    if (command == "discover") {
+        if (positionals.size() < 2) {
+            std::cerr << "error: discover requires a CIDR, e.g. 192.168.1.0/24\n";
+            return 2;
+        }
+        return run_discover(positionals[1], port, timeout_ms < 0 ? 700 : timeout_ms,
+                            concurrency);
+    }
+
+    if (endpoint.empty()) {
+        std::cerr << "error: '" << command << "' requires --tcp HOST[:PORT]\n";
+        return 2;
+    }
+    return run_query(endpoint, command, timeout_ms < 0 ? 5000 : timeout_ms);
 }

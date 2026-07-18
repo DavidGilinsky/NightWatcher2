@@ -29,6 +29,8 @@ endif()
 
 option(NW_BUILD_TESTS "Build unit tests" ON)
 
+find_package(Threads REQUIRED)
+
 # ---- Shared warning flags ----
 add_library(nw_warnings INTERFACE)
 target_compile_options(nw_warnings INTERFACE
@@ -57,12 +59,13 @@ target_link_libraries(nightwatcherd PRIVATE nw_core)
 add_library(nw_sqm STATIC
     src/sqm/protocol.cpp
     src/sqm/tcp_transport.cpp
-    src/sqm/sqm_device.cpp)
+    src/sqm/sqm_device.cpp
+    src/sqm/discovery.cpp)
 target_include_directories(nw_sqm PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sqm
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
-target_link_libraries(nw_sqm PUBLIC nw_warnings)
+target_link_libraries(nw_sqm PUBLIC nw_warnings Threads::Threads)
 
 # ---- sqmctl CLI ----
 add_executable(sqmctl src/cli/sqmctl.cpp)
@@ -86,6 +89,10 @@ if(NW_BUILD_TESTS)
     add_executable(protocol_test tests/protocol_test.cpp)
     target_link_libraries(protocol_test PRIVATE nw_sqm)
     add_test(NAME protocol_test COMMAND protocol_test)
+
+    add_executable(discovery_test tests/discovery_test.cpp)
+    target_link_libraries(discovery_test PRIVATE nw_sqm)
+    add_test(NAME discovery_test COMMAND discovery_test)
 
     # Software SQM simulator (TCP) for local end-to-end testing without hardware.
     add_executable(sqm-sim tools/sqm-sim.cpp)

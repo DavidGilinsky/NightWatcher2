@@ -1,7 +1,9 @@
 // ---------------------------------------------------------------------------
 // Author:        David Gilinsky
 // File:          src/sqm/tcp_transport.cpp
-// Purpose:       POSIX-sockets implementation of TcpTransport (SQM-LE).
+// Purpose:       POSIX-sockets implementation of TcpTransport (SQM-LE). Uses a
+//                non-blocking connect bounded by a poll() timeout so unreachable
+//                hosts fail fast (important for subnet discovery).
 // Created:       2026-07-18
 // Last Modified: 2026-07-18
 // Version:       0.1.0
@@ -9,7 +11,9 @@
 // ---------------------------------------------------------------------------
 #include "tcp_transport.hpp"
 
+#include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -19,6 +23,40 @@
 #include <stdexcept>
 
 namespace nightwatcher::sqm {
+namespace {
+
+// Connect `fd` to `addr` but give up after `timeout_ms`. Returns true on a
+// completed connection. Leaves the socket in blocking mode on return.
+bool connect_with_timeout(int fd, const struct sockaddr* addr, socklen_t len,
+                          int timeout_ms) {
+    const int flags = ::fcntl(fd, F_GETFL, 0);
+    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+
+    bool ok = false;
+    if (::connect(fd, addr, len) == 0) {
+        ok = true;
+    } else if (errno == EINPROGRESS) {
+        struct pollfd pfd {};
+        pfd.fd = fd;
+        pfd.events = POLLOUT;
+        int pr;
+        do {
+            pr = ::poll(&pfd, 1, timeout_ms);
+        } while (pr < 0 && errno == EINTR);
+        if (pr > 0 && (pfd.revents & POLLOUT)) {
+            int soerr = 0;
+            socklen_t slen = sizeof(soerr);
+            if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &soerr, &slen) == 0 && soerr == 0) {
+                ok = true;
+            }
+        }
+    }
+
+    ::fcntl(fd, F_SETFL, flags);  // restore blocking mode
+    return ok;
+}
+
+}  // namespace
 
 TcpTransport::TcpTransport(const std::string& host, uint16_t port, int timeout_ms) {
     struct addrinfo hints {};
@@ -37,13 +75,15 @@ TcpTransport::TcpTransport(const std::string& host, uint16_t port, int timeout_m
         fd = ::socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
         if (fd < 0) continue;
 
-        struct timeval tv {};
-        tv.tv_sec = timeout_ms / 1000;
-        tv.tv_usec = (timeout_ms % 1000) * 1000;
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-
-        if (::connect(fd, ai->ai_addr, ai->ai_addrlen) == 0) break;
+        if (connect_with_timeout(fd, ai->ai_addr, ai->ai_addrlen, timeout_ms)) {
+            // Apply send/receive timeouts for the subsequent command exchange.
+            struct timeval tv {};
+            tv.tv_sec = timeout_ms / 1000;
+            tv.tv_usec = (timeout_ms % 1000) * 1000;
+            ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            break;
+        }
         ::close(fd);
         fd = -1;
     }
