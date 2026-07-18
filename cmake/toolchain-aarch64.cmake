@@ -1,3 +1,11 @@
+# ---------------------------------------------------------------------------
+# Author:        David Gilinsky
+# File:          cmake/toolchain-aarch64.cmake
+# Purpose:       CMake toolchain file for cross-compiling to 64-bit ARM (aarch64).
+# Created:       2026-07-18
+# Last Modified: 2026-07-18
+# Version:       0.1.0
+# ---------------------------------------------------------------------------
 # Cross-compile toolchain for 64-bit ARM (aarch64), e.g. Raspberry Pi OS 64-bit.
 #
 # Prerequisite (Debian/Ubuntu host):  sudo apt install g++-aarch64-linux-gnu

@@ -1,3 +1,11 @@
+# ---------------------------------------------------------------------------
+# Author:        David Gilinsky
+# File:          .github/workflows/ci.yml
+# Purpose:       GitHub Actions CI: amd64 build/test and arm64 cross-compile.
+# Created:       2026-07-18
+# Last Modified: 2026-07-18
+# Version:       0.1.0
+# ---------------------------------------------------------------------------
 name: CI
 
 on:

@@ -1,3 +1,11 @@
+// ---------------------------------------------------------------------------
+// Author:        David Gilinsky
+// File:          src/daemon/config.cpp
+// Purpose:       Implementation of the INI-style configuration file parser.
+// Created:       2026-07-18
+// Last Modified: 2026-07-18
+// Version:       0.1.0
+// ---------------------------------------------------------------------------
 #include "config.hpp"
 
 #include <algorithm>

@@ -1,3 +1,12 @@
+<!--
+  Author:        David Gilinsky
+  File:          docs/architecture.md
+  Purpose:       System architecture, components, technology choices, and roadmap.
+  Created:       2026-07-18
+  Last Modified: 2026-07-18
+  Version:       0.1.0
+-->
+
 # NightWatcher2 architecture
 
 ## Overview

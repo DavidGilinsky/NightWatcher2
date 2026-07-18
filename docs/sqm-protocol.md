@@ -1,3 +1,12 @@
+<!--
+  Author:        David Gilinsky
+  File:          docs/sqm-protocol.md
+  Purpose:       Reference for the Unihedron SQM serial/TCP command+response protocol.
+  Created:       2026-07-18
+  Last Modified: 2026-07-18
+  Version:       0.1.0
+-->
+
 # Unihedron SQM command/response reference
 
 Extracted from the Unihedron *SQM-LU Operator's Manual* (v20260615), section 8.

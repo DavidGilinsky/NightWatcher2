@@ -1,3 +1,11 @@
+# ---------------------------------------------------------------------------
+# Author:        David Gilinsky
+# File:          config/systemd/nightwatcherd.service
+# Purpose:       systemd service unit for the nightwatcherd daemon.
+# Created:       2026-07-18
+# Last Modified: 2026-07-18
+# Version:       0.1.0
+# ---------------------------------------------------------------------------
 [Unit]
 Description=NightWatcher2 SQM daemon
 Documentation=https://github.com/DavidGilinsky/NightWatcher2

@@ -1,4 +1,12 @@
-// Unit test for nightwatcher::Config::load — no framework, plain CTest exit code.
+// ---------------------------------------------------------------------------
+// Author:        David Gilinsky
+// File:          tests/config_test.cpp
+// Purpose:       Unit test for nightwatcher::Config::load (plain CTest exit code,
+//                no framework).
+// Created:       2026-07-18
+// Last Modified: 2026-07-18
+// Version:       0.1.0
+// ---------------------------------------------------------------------------
 #include <cstdio>
 #include <fstream>
 #include <string>

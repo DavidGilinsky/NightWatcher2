@@ -1,3 +1,12 @@
+<!--
+  Author:        David Gilinsky
+  File:          README.md
+  Purpose:       Project overview, build instructions, and repository layout.
+  Created:       2026-07-18
+  Last Modified: 2026-07-18
+  Version:       0.1.0
+-->
+
 # NightWatcher2
 
 Tools to interface with Unihedron **Sky Quality Meters (SQMs)** in furtherance of

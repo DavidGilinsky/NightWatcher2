@@ -1,3 +1,11 @@
+-- ---------------------------------------------------------------------------
+-- Author:        David Gilinsky
+-- File:          sql/schema.sql
+-- Purpose:       MariaDB/MySQL schema: sensors, readings, and config_log tables.
+-- Created:       2026-07-18
+-- Last Modified: 2026-07-18
+-- Version:       0.1.0
+-- ---------------------------------------------------------------------------
 -- NightWatcher2 database schema (MariaDB / MySQL).
 -- Draft for Milestone 0; refined and migrated in Milestone 2.
 --

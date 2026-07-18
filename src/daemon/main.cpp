@@ -1,3 +1,12 @@
+// ---------------------------------------------------------------------------
+// Author:        David Gilinsky
+// File:          src/daemon/main.cpp
+// Purpose:       Entry point for nightwatcherd: argument parsing, configuration
+//                loading, and the startup summary (poll/serve loop lands later).
+// Created:       2026-07-18
+// Last Modified: 2026-07-18
+// Version:       0.1.0
+// ---------------------------------------------------------------------------
 #include <iostream>
 #include <string>
 

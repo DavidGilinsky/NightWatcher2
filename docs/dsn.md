@@ -1,3 +1,12 @@
+<!--
+  Author:        David Gilinsky
+  File:          docs/dsn.md
+  Purpose:       Notes on the Dark Sky Network data and submission format.
+  Created:       2026-07-18
+  Last Modified: 2026-07-18
+  Version:       0.1.0
+-->
+
 # Dark Sky Network (DSN) notes
 
 Reference: <https://soazcomms.github.io/docs/DSN_Description.html>

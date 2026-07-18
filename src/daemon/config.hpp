@@ -1,3 +1,12 @@
+// ---------------------------------------------------------------------------
+// Author:        David Gilinsky
+// File:          src/daemon/config.hpp
+// Purpose:       Declarations for the daemon's INI-style configuration model
+//                (Config, SensorConfig) and its loader.
+// Created:       2026-07-18
+// Last Modified: 2026-07-18
+// Version:       0.1.0
+// ---------------------------------------------------------------------------
 #pragma once
 
 #include <string>
