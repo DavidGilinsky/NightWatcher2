@@ -5,6 +5,7 @@
   Created:       2026-07-18
   Last Modified: 2026-07-18
   Version:       0.1.0
+  License:       GPL-3.0-or-later
 -->
 
 # NightWatcher2
@@ -22,8 +23,8 @@ that data through an API and a web UI.
 | Component | Description | Status |
 |-----------|-------------|--------|
 | `nightwatcherd` | Daemon: polls SQM(s) at a configurable interval, records readings, serves the API | Skeleton (M0) |
-| SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol | Planned (M1) |
-| `sqmctl` | CLI to query/configure a single SQM | Planned (M1) |
+| SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol | SQM-LE done (M1); USB serial pending |
+| `sqmctl` | CLI to query/configure a single SQM | Done (M1) |
 | Database | MariaDB/MySQL store for readings + configuration/calibration history | Planned (M2) |
 | REST API | Embedded HTTP server (JSON) to query and configure | Planned (M4) |
 | Web UI | Status dashboard, configuration, query, time-series graph | Planned (M5) |
@@ -51,6 +52,27 @@ Run the skeleton daemon:
 sudo apt install g++-aarch64-linux-gnu
 cmake -B build-arm64 -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake -DNW_BUILD_TESTS=OFF
 cmake --build build-arm64 --parallel
+```
+
+## Talking to an SQM (`sqmctl`)
+
+`sqmctl` queries a single meter over TCP (SQM-LE, default port 10001):
+
+```sh
+sqmctl --tcp 192.168.1.50:10001 info    # unit info        (ix)
+sqmctl --tcp 192.168.1.50:10001 read    # averaged reading (rx)
+sqmctl --tcp 192.168.1.50 unaveraged    # unaveraged read  (ux)
+sqmctl --tcp 192.168.1.50 cal           # calibration info (cx)
+```
+
+### Testing without hardware
+
+A software simulator emits canned Unihedron responses so the library and CLI can be
+exercised end-to-end without a physical meter:
+
+```sh
+./build/sqm-sim 10001 &                 # listen on 127.0.0.1:10001
+./build/sqmctl --tcp 127.0.0.1:10001 read
 ```
 
 ## Configuration

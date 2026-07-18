@@ -5,6 +5,7 @@
   Created:       2026-07-18
   Last Modified: 2026-07-18
   Version:       0.1.0
+  License:       GPL-3.0-or-later
 -->
 
 # NightWatcher2 architecture
@@ -46,8 +47,9 @@ C++17 for the core with a C-friendly device layer; CMake build. Linux x86 and AR
 
 ## Roadmap
 
-- **M0 — Bootstrap** *(current)*: repo, CMake scaffold, skeleton daemon, CI, docs, schema draft.
-- **M1 — SQM library + `sqmctl`**: TCP transport (SQM-LE) first, protocol codec, simulator, tests.
+- **M0 — Bootstrap** *(done)*: repo, CMake scaffold, skeleton daemon, CI, docs, schema draft.
+- **M1 — SQM library + `sqmctl`** *(SQM-LE done)*: TCP transport, protocol codec, simulator,
+  tests; USB serial transport still pending.
 - **M2 — Database layer**: schema + migrations + `libmariadb` wrapper.
 - **M3 — Daemon**: scheduler polls SQM → DB; config; logging; systemd unit.
 - **M4 — API**: civetweb + REST endpoints + auth.

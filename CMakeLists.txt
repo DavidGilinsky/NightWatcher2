@@ -5,6 +5,7 @@
 # Created:       2026-07-18
 # Last Modified: 2026-07-18
 # Version:       0.1.0
+# License:       GPL-3.0-or-later
 # ---------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.16)
 
@@ -52,9 +53,24 @@ target_link_libraries(nw_core PUBLIC nw_warnings)
 add_executable(nightwatcherd src/daemon/main.cpp)
 target_link_libraries(nightwatcherd PRIVATE nw_core)
 
+# ---- SQM device library ----
+add_library(nw_sqm STATIC
+    src/sqm/protocol.cpp
+    src/sqm/tcp_transport.cpp
+    src/sqm/sqm_device.cpp)
+target_include_directories(nw_sqm PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/sqm
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/generated)
+target_link_libraries(nw_sqm PUBLIC nw_warnings)
+
+# ---- sqmctl CLI ----
+add_executable(sqmctl src/cli/sqmctl.cpp)
+target_link_libraries(sqmctl PRIVATE nw_sqm)
+
 # ---- Install rules ----
 include(GNUInstallDirs)
-install(TARGETS nightwatcherd RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS nightwatcherd sqmctl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES config/nightwatcher.conf.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
 install(FILES config/systemd/nightwatcherd.service
@@ -66,6 +82,14 @@ if(NW_BUILD_TESTS)
     add_executable(config_test tests/config_test.cpp)
     target_link_libraries(config_test PRIVATE nw_core)
     add_test(NAME config_test COMMAND config_test)
+
+    add_executable(protocol_test tests/protocol_test.cpp)
+    target_link_libraries(protocol_test PRIVATE nw_sqm)
+    add_test(NAME protocol_test COMMAND protocol_test)
+
+    # Software SQM simulator (TCP) for local end-to-end testing without hardware.
+    add_executable(sqm-sim tools/sqm-sim.cpp)
+    target_link_libraries(sqm-sim PRIVATE nw_warnings)
 endif()
 
 message(STATUS "NightWatcher2 ${PROJECT_VERSION} — build type: ${CMAKE_BUILD_TYPE}, tests: ${NW_BUILD_TESTS}")
