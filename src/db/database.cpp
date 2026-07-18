@@ -69,17 +69,118 @@ void Database::exec(const std::string& sql) {
     }
 }
 
-void Database::upsert_sensor(const SensorRow& s) {
+namespace {
+
+const char* const kSensorCols =
+    "id, name, site, serial_number, model, protocol_ver, feature_ver, latitude, "
+    "longitude, elevation_m, timezone, transport, address, poll_interval_s, status, "
+    "installed_at, notes, created_at";
+
+SensorRow sensor_from_row(MYSQL_ROW row) {
+    SensorRow s;
+    s.id = row[0] ? row[0] : "";
+    s.name = row[1] ? row[1] : "";
+    s.site = row[2] ? row[2] : "";
+    s.serial_number = row[3] ? row[3] : "";
+    s.model = row[4] ? row[4] : "";
+    if (row[5]) s.protocol_ver = std::atoi(row[5]);
+    if (row[6]) s.feature_ver = std::atoi(row[6]);
+    if (row[7]) s.latitude = std::atof(row[7]);
+    if (row[8]) s.longitude = std::atof(row[8]);
+    if (row[9]) s.elevation_m = std::atof(row[9]);
+    s.timezone = row[10] ? row[10] : "";
+    s.transport = row[11] ? row[11] : "";
+    s.address = row[12] ? row[12] : "";
+    s.poll_interval_s = row[13] ? std::atoi(row[13]) : 300;
+    s.status = row[14] ? row[14] : "";
+    s.installed_at = row[15] ? row[15] : "";
+    s.notes = row[16] ? row[16] : "";
+    s.created_at = row[17] ? row[17] : "";
+    return s;
+}
+
+}  // namespace
+
+void Database::upsert_sensor(const std::string& id, const SensorFields& f) {
+    std::vector<std::string> cols{"id"};
+    std::vector<std::string> vals{"'" + esc(id) + "'"};
+    std::vector<std::string> ups;
+
+    const auto addS = [&](const char* c, const std::optional<std::string>& v) {
+        if (v) {
+            cols.emplace_back(c);
+            vals.push_back("'" + esc(*v) + "'");
+            ups.push_back(std::string(c) + "=VALUES(" + c + ")");
+        }
+    };
+    const auto addI = [&](const char* c, const std::optional<int>& v) {
+        if (v) {
+            cols.emplace_back(c);
+            vals.push_back(std::to_string(*v));
+            ups.push_back(std::string(c) + "=VALUES(" + c + ")");
+        }
+    };
+    const auto addD = [&](const char* c, const std::optional<double>& v) {
+        if (v) {
+            cols.emplace_back(c);
+            vals.push_back(std::to_string(*v));
+            ups.push_back(std::string(c) + "=VALUES(" + c + ")");
+        }
+    };
+
+    addS("name", f.name); addS("site", f.site); addS("serial_number", f.serial_number);
+    addS("model", f.model); addI("protocol_ver", f.protocol_ver); addI("feature_ver", f.feature_ver);
+    addD("latitude", f.latitude); addD("longitude", f.longitude); addD("elevation_m", f.elevation_m);
+    addS("timezone", f.timezone); addS("transport", f.transport); addS("address", f.address);
+    addI("poll_interval_s", f.poll_interval_s); addS("status", f.status);
+    addS("installed_at", f.installed_at); addS("notes", f.notes);
+
     std::ostringstream q;
-    q << "INSERT INTO sensors (id, name, transport, address) VALUES ('" << esc(s.id) << "', '"
-      << esc(s.name) << "', '" << esc(s.transport) << "', '" << esc(s.address) << "') "
-      << "ON DUPLICATE KEY UPDATE name=VALUES(name), transport=VALUES(transport), "
-         "address=VALUES(address)";
+    q << "INSERT INTO sensors (";
+    for (size_t i = 0; i < cols.size(); ++i) { if (i) q << ", "; q << cols[i]; }
+    q << ") VALUES (";
+    for (size_t i = 0; i < vals.size(); ++i) { if (i) q << ", "; q << vals[i]; }
+    q << ")";
+    if (!ups.empty()) {
+        q << " ON DUPLICATE KEY UPDATE ";
+        for (size_t i = 0; i < ups.size(); ++i) { if (i) q << ", "; q << ups[i]; }
+    }
     exec(q.str());
 }
 
+bool Database::update_sensor(const std::string& id, const SensorFields& f) {
+    if (!find_sensor(id)) return false;
+
+    std::vector<std::string> sets;
+    const auto setS = [&](const char* c, const std::optional<std::string>& v) {
+        if (v) sets.push_back(std::string(c) + "='" + esc(*v) + "'");
+    };
+    const auto setI = [&](const char* c, const std::optional<int>& v) {
+        if (v) sets.push_back(std::string(c) + "=" + std::to_string(*v));
+    };
+    const auto setD = [&](const char* c, const std::optional<double>& v) {
+        if (v) sets.push_back(std::string(c) + "=" + std::to_string(*v));
+    };
+
+    setS("name", f.name); setS("site", f.site); setS("serial_number", f.serial_number);
+    setS("model", f.model); setI("protocol_ver", f.protocol_ver); setI("feature_ver", f.feature_ver);
+    setD("latitude", f.latitude); setD("longitude", f.longitude); setD("elevation_m", f.elevation_m);
+    setS("timezone", f.timezone); setS("transport", f.transport); setS("address", f.address);
+    setI("poll_interval_s", f.poll_interval_s); setS("status", f.status);
+    setS("installed_at", f.installed_at); setS("notes", f.notes);
+
+    if (sets.empty()) return true;  // sensor exists; nothing to change
+
+    std::ostringstream q;
+    q << "UPDATE sensors SET ";
+    for (size_t i = 0; i < sets.size(); ++i) { if (i) q << ", "; q << sets[i]; }
+    q << " WHERE id='" << esc(id) << "'";
+    exec(q.str());
+    return true;
+}
+
 std::vector<SensorRow> Database::sensors() {
-    exec("SELECT id, name, transport, address FROM sensors ORDER BY id");
+    exec(std::string("SELECT ") + kSensorCols + " FROM sensors ORDER BY id");
     MYSQL_RES* res = mysql_store_result(impl_->conn);
     if (res == nullptr) {
         throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
@@ -87,12 +188,7 @@ std::vector<SensorRow> Database::sensors() {
     std::vector<SensorRow> out;
     MYSQL_ROW row;
     while ((row = mysql_fetch_row(res)) != nullptr) {
-        SensorRow s;
-        s.id = row[0] ? row[0] : "";
-        s.name = row[1] ? row[1] : "";
-        s.transport = row[2] ? row[2] : "";
-        s.address = row[3] ? row[3] : "";
-        out.push_back(s);
+        out.push_back(sensor_from_row(row));
     }
     mysql_free_result(res);
     return out;
@@ -100,7 +196,7 @@ std::vector<SensorRow> Database::sensors() {
 
 std::optional<SensorRow> Database::find_sensor(const std::string& id) {
     std::ostringstream q;
-    q << "SELECT id, name, transport, address FROM sensors WHERE id='" << esc(id) << "' LIMIT 1";
+    q << "SELECT " << kSensorCols << " FROM sensors WHERE id='" << esc(id) << "' LIMIT 1";
     exec(q.str());
     MYSQL_RES* res = mysql_store_result(impl_->conn);
     if (res == nullptr) {
@@ -108,12 +204,7 @@ std::optional<SensorRow> Database::find_sensor(const std::string& id) {
     }
     std::optional<SensorRow> out;
     if (MYSQL_ROW row = mysql_fetch_row(res)) {
-        SensorRow s;
-        s.id = row[0] ? row[0] : "";
-        s.name = row[1] ? row[1] : "";
-        s.transport = row[2] ? row[2] : "";
-        s.address = row[3] ? row[3] : "";
-        out = s;
+        out = sensor_from_row(row);
     }
     mysql_free_result(res);
     return out;

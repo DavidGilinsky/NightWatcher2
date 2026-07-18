@@ -47,19 +47,39 @@ int main() {
 
         dbh.remove_sensor(kId);  // start from a clean slate
 
-        db::SensorRow s;
-        s.id = kId;
-        s.name = "Integration Test";
-        s.transport = "tcp";
-        s.address = "127.0.0.1:10001";
-        dbh.upsert_sensor(s);
+        db::SensorFields sf;
+        sf.name = "Integration Test";
+        sf.transport = "tcp";
+        sf.address = "127.0.0.1:10001";
+        sf.latitude = 32.4188;
+        sf.longitude = -110.7345;
+        sf.elevation_m = 2791.0;
+        sf.timezone = "America/Phoenix";
+        dbh.upsert_sensor(kId, sf);
 
         const auto found = dbh.find_sensor(kId);
         CHECK(found.has_value());
         if (found) {
             CHECK(found->address == "127.0.0.1:10001");
             CHECK(found->name == "Integration Test");
+            CHECK(found->timezone == "America/Phoenix");
+            CHECK(found->latitude.has_value());
+            if (found->latitude) CHECK(std::fabs(*found->latitude - 32.4188) < 1e-4);
         }
+
+        // Partial update: change only elevation; other fields must be preserved.
+        db::SensorFields upd;
+        upd.elevation_m = 2795.0;
+        CHECK(dbh.update_sensor(kId, upd));
+        const auto found2 = dbh.find_sensor(kId);
+        if (found2) {
+            CHECK(found2->name == "Integration Test");  // preserved by partial update
+            CHECK(found2->elevation_m.has_value());
+            if (found2->elevation_m) CHECK(std::fabs(*found2->elevation_m - 2795.0) < 1e-3);
+        }
+        // Updating a nonexistent sensor returns false and creates nothing.
+        CHECK(!dbh.update_sensor("NOPE_NWTEST", upd));
+        CHECK(!dbh.find_sensor("NOPE_NWTEST").has_value());
 
         sqm::Reading r;
         r.mag_arcsec2 = 20.13;

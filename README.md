@@ -121,12 +121,20 @@ export NW_DB_USER=nightwatcher NW_DB_PASSWORD=nightwatcher NW_DB_NAME=nightwatch
 
 ### `nwdb`
 
+Register a sensor with full site metadata (serial/protocol/feature are auto-filled from the
+device via `ix` unless `--no-probe`):
+
 ```sh
-nwdb add-sensor DSN003 --tcp 172.22.4.112:10001 --name Sugarloaf
-nwdb poll DSN003        # read the SQM now and store the reading
-nwdb readings DSN003    # show recent stored readings
-nwdb cal DSN003         # read + store calibration
-nwdb sensors            # list registered sensors
+nwdb add-sensor DSN003 --tcp 172.22.4.112:10001 \
+     --name Sugarloaf --site "Sugarloaf Peak" \
+     --lat 32.4188 --lon -110.7345 --elev 2791 \
+     --timezone America/Phoenix --installed 2026-07-18
+nwdb set-sensor DSN003 --elev 2795    # partial edit — only elevation changes
+nwdb show DSN003                      # full metadata for one sensor
+nwdb sensors                          # list registered sensors
+nwdb poll DSN003                      # read the SQM now and store the reading
+nwdb readings DSN003                  # show recent stored readings
+nwdb cal DSN003                       # read + store calibration
 ```
 
 ## Configuration

@@ -33,11 +33,47 @@ struct DbConfig {
     static DbConfig from_env();
 };
 
+// Full sensor/station record as read from the database.
 struct SensorRow {
     std::string id;
     std::string name;
-    std::string transport;  // "tcp" | "serial"
-    std::string address;    // "host:port" | "/dev/ttyUSB0"
+    std::string site;                    // grouping label for co-located instruments
+    std::string serial_number;
+    std::string model;
+    std::optional<int> protocol_ver;
+    std::optional<int> feature_ver;
+    std::optional<double> latitude;
+    std::optional<double> longitude;
+    std::optional<double> elevation_m;
+    std::string timezone;                // IANA tz, e.g. "America/Phoenix"
+    std::string transport;               // "tcp" | "serial"
+    std::string address;                 // "host:port" | "/dev/ttyUSB0"
+    int poll_interval_s = 300;
+    std::string status;                  // "active" | "inactive" | "retired"
+    std::string installed_at;            // "YYYY-MM-DD" or empty
+    std::string notes;
+    std::string created_at;
+};
+
+// Editable sensor fields. Only members that are set are written, so the same
+// struct drives both creation (add-sensor) and partial edits (set-sensor).
+struct SensorFields {
+    std::optional<std::string> name;
+    std::optional<std::string> site;
+    std::optional<std::string> serial_number;
+    std::optional<std::string> model;
+    std::optional<int>         protocol_ver;
+    std::optional<int>         feature_ver;
+    std::optional<double>      latitude;
+    std::optional<double>      longitude;
+    std::optional<double>      elevation_m;
+    std::optional<std::string> timezone;
+    std::optional<std::string> transport;    // "tcp" | "serial"
+    std::optional<std::string> address;
+    std::optional<int>         poll_interval_s;
+    std::optional<std::string> status;       // "active" | "inactive" | "retired"
+    std::optional<std::string> installed_at; // "YYYY-MM-DD"
+    std::optional<std::string> notes;
 };
 
 struct ReadingRow {
@@ -64,8 +100,12 @@ public:
     Database(const Database&) = delete;
     Database& operator=(const Database&) = delete;
 
-    // Insert or update a sensor row (keyed on id).
-    void upsert_sensor(const SensorRow& s);
+    // Create a sensor or update the provided fields (INSERT ... ON DUPLICATE KEY
+    // UPDATE). transport + address must be present in `f` for a brand-new sensor.
+    void upsert_sensor(const std::string& id, const SensorFields& f);
+    // Update only the provided fields of an existing sensor; returns false (and
+    // creates nothing) if no sensor with `id` exists.
+    bool update_sensor(const std::string& id, const SensorFields& f);
     std::vector<SensorRow> sensors();
     std::optional<SensorRow> find_sensor(const std::string& id);
     void remove_sensor(const std::string& id);  // also removes its readings + config (cascade)
