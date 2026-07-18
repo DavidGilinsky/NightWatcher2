@@ -110,6 +110,15 @@ public:
     std::optional<SensorRow> find_sensor(const std::string& id);
     void remove_sensor(const std::string& id);  // also removes its readings + config (cascade)
 
+    // Sensors with status = 'active'.
+    std::vector<SensorRow> active_sensors();
+
+    // Append an operational event (device up/down, errors, daemon lifecycle).
+    // Empty device_id or detail are stored as SQL NULL.
+    void insert_event(const std::string& source, const std::string& level,
+                      const std::string& event, const std::string& detail = "",
+                      const std::string& device_id = "");
+
     // Insert a reading. If ts_utc is empty the database clock (UTC) is used.
     // Returns the new row id, or 0 if a row for (sensor_id, ts_utc) already
     // existed (INSERT IGNORE on the unique key).

@@ -216,6 +216,34 @@ void Database::remove_sensor(const std::string& id) {
     exec(q.str());
 }
 
+std::vector<SensorRow> Database::active_sensors() {
+    exec(std::string("SELECT ") + kSensorCols +
+         " FROM sensors WHERE status='active' ORDER BY id");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) {
+        throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    }
+    std::vector<SensorRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) {
+        out.push_back(sensor_from_row(row));
+    }
+    mysql_free_result(res);
+    return out;
+}
+
+void Database::insert_event(const std::string& source, const std::string& level,
+                            const std::string& event, const std::string& detail,
+                            const std::string& device_id) {
+    std::ostringstream q;
+    q << "INSERT INTO events (ts_utc, device_id, source, level, event, detail) VALUES ("
+      << "UTC_TIMESTAMP(), "
+      << (device_id.empty() ? std::string("NULL") : ("'" + esc(device_id) + "'")) << ", '"
+      << esc(source) << "', '" << esc(level) << "', '" << esc(event) << "', "
+      << (detail.empty() ? std::string("NULL") : ("'" + esc(detail) + "'")) << ")";
+    exec(q.str());
+}
+
 long long Database::insert_reading(const std::string& sensor_id, const sqm::Reading& r,
                                    const std::string& ts_utc, const std::string& source,
                                    const std::string& quality) {

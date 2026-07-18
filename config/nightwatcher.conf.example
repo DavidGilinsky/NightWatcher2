@@ -5,16 +5,19 @@
 # Created:       2026-07-18
 # Last Modified: 2026-07-18
 # Version:       0.1.0
+# License:       GPL-3.0-or-later
 # ---------------------------------------------------------------------------
 # NightWatcher2 daemon configuration (INI-style).
 # Copy to /etc/nightwatcher/nightwatcher.conf and edit for your site.
 
 [daemon]
-# Seconds between polls of each SQM. The Dark Sky Network standard is 300 (5 min).
-interval = 300
+# Sensors are registered in the database with `nwdb add-sensor`, and each sensor's
+# poll cadence is its own poll_interval_s column (nwdb set-sensor --poll-interval).
+# This file only configures the daemon itself: the database connection and API port.
 
 [database]
-host = localhost
+host = 127.0.0.1
+port = 3306
 name = nightwatcher
 user = nightwatcher
 # The database password is read from the environment variable NW_DB_PASSWORD.
@@ -23,16 +26,3 @@ user = nightwatcher
 [api]
 # Port for the built-in HTTP server (REST API + web UI). Implemented in a later milestone.
 port = 8080
-
-# One [sensor:<DSN-id>] block per Sky Quality Meter.
-#   transport = tcp     -> SQM-LE (Ethernet). address = host:port  (default port 10001)
-#   transport = serial  -> SQM-LU (USB).      address = /dev/ttyUSB0
-[sensor:DSN003]
-transport = tcp
-address = 192.168.1.50:10001
-name = Sugarloaf
-
-# [sensor:DSN004]
-# transport = serial
-# address = /dev/ttyUSB0
-# name = Example USB unit

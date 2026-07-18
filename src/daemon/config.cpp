@@ -5,6 +5,7 @@
 // Created:       2026-07-18
 // Last Modified: 2026-07-18
 // Version:       0.1.0
+// License:       GPL-3.0-or-later
 // ---------------------------------------------------------------------------
 #include "config.hpp"
 
@@ -72,6 +73,7 @@ Config Config::load(const std::string& path) {
             if (key == "host") cfg.db_host = value;
             else if (key == "name") cfg.db_name = value;
             else if (key == "user") cfg.db_user = value;
+            else if (key == "port") cfg.db_port = std::stoi(value);
         } else if (section == "api") {
             if (key == "port") cfg.api_port = std::stoi(value);
         } else if (current_sensor >= 0) {

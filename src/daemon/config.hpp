@@ -6,6 +6,7 @@
 // Created:       2026-07-18
 // Last Modified: 2026-07-18
 // Version:       0.1.0
+// License:       GPL-3.0-or-later
 // ---------------------------------------------------------------------------
 #pragma once
 
@@ -34,6 +35,7 @@ struct Config {
     std::string db_host = "localhost";
     std::string db_name = "nightwatcher";
     std::string db_user = "nightwatcher";
+    int db_port = 3306;
     int api_port = 8080;
     std::vector<SensorConfig> sensors;
 

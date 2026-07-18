@@ -45,16 +45,13 @@ configure_file(
 
 # ---- Core library (shared by the daemon and the tests) ----
 add_library(nw_core STATIC
-    src/daemon/config.cpp)
+    src/daemon/config.cpp
+    src/daemon/logging.cpp)
 target_include_directories(nw_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/daemon
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/generated)
 target_link_libraries(nw_core PUBLIC nw_warnings)
-
-# ---- Daemon executable ----
-add_executable(nightwatcherd src/daemon/main.cpp)
-target_link_libraries(nightwatcherd PRIVATE nw_core)
 
 # ---- SQM device library ----
 add_library(nw_sqm STATIC
@@ -89,13 +86,17 @@ if(NW_WITH_DB)
 
     add_executable(nwdb src/cli/nwdb.cpp)
     target_link_libraries(nwdb PRIVATE nw_db nw_sqm)
+
+    # The daemon records to the database, so it requires the DB layer.
+    add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)
+    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db Threads::Threads)
 endif()
 
 # ---- Install rules ----
 include(GNUInstallDirs)
-install(TARGETS nightwatcherd sqmctl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS sqmctl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(NW_WITH_DB)
-    install(TARGETS nwdb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS nightwatcherd nwdb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(FILES config/nightwatcher.conf.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)

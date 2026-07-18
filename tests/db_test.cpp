@@ -81,6 +81,16 @@ int main() {
         CHECK(!dbh.update_sensor("NOPE_NWTEST", upd));
         CHECK(!dbh.find_sensor("NOPE_NWTEST").has_value());
 
+        // active_sensors() includes our (active by default) test sensor.
+        bool in_active = false;
+        for (const auto& a : dbh.active_sensors()) {
+            if (a.id == kId) in_active = true;
+        }
+        CHECK(in_active);
+
+        // insert_event must succeed (used by the daemon for its event log).
+        dbh.insert_event("test", "info", "unit-test", "db_test event", kId);
+
         sqm::Reading r;
         r.mag_arcsec2 = 20.13;
         r.freq_hz = 123;

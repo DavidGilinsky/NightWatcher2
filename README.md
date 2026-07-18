@@ -22,7 +22,7 @@ that data through an API and a web UI.
 
 | Component | Description | Status |
 |-----------|-------------|--------|
-| `nightwatcherd` | Daemon: polls SQM(s) at a configurable interval, records readings, serves the API | Skeleton (M0) |
+| `nightwatcherd` | Daemon: polls active DB sensors on their interval, records readings, logs events | Polling done (M3); API pending |
 | SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol; subnet discovery | SQM-LE + discovery done (M1); USB serial pending |
 | `sqmctl` | CLI to discover and query a single SQM | Done (M1) |
 | Database | MariaDB store (libmariadb) for readings + configuration/calibration history | Done (M2) |
@@ -140,9 +140,25 @@ nwdb cal DSN003                       # read + store calibration
 ## Configuration
 
 Copy [`config/nightwatcher.conf.example`](config/nightwatcher.conf.example) to
-`/etc/nightwatcher/nightwatcher.conf` and edit it. Each SQM is one `[sensor:<DSN-id>]`
-block; `transport = tcp` targets an SQM-LE (default port 10001), `transport = serial`
-targets an SQM-LU.
+`/etc/nightwatcher/nightwatcher.conf`. It configures only the daemon itself (database
+connection + API port); **sensors are registered in the database** with `nwdb add-sensor`,
+and each sensor's cadence is its `poll_interval_s`.
+
+## Running the daemon
+
+`nightwatcherd` polls every `status = 'active'` sensor from the database on its interval,
+stores readings (with the `quality` flag), and logs connect/disconnect/errors to the
+`events` table.
+
+```sh
+export NW_DB_PASSWORD=nightwatcher
+./build/nightwatcherd --config config/nightwatcher.conf.example
+```
+
+Signals: `SIGTERM` / `SIGINT` shut down gracefully; `SIGHUP` reloads the sensor list (so a
+sensor added via `nwdb` is picked up without a restart). Under systemd, install
+[`config/systemd/nightwatcherd.service`](config/systemd/nightwatcherd.service) and put the
+database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASSWORD=...`.
 
 ## Repository layout
 

@@ -52,7 +52,9 @@ C++17 for the core with a C-friendly device layer; CMake build. Linux x86 and AR
   tests; USB serial transport still pending.
 - **M2 — Database layer** *(done)*: `libmariadb` wrapper (`nw_db`), schema, and the `nwdb`
   CLI (register sensors, poll an SQM into the DB, query readings).
-- **M3 — Daemon**: scheduler polls SQM → DB; config; logging; systemd unit.
+- **M3 — Daemon** *(done)*: `Scheduler` polls each active DB sensor on its
+  `poll_interval_s` → DB; stderr logging + `events` table; `sigwait` shutdown/`SIGHUP`
+  reload; runs under systemd. The database is the source of truth for the sensor list.
 - **M4 — API**: civetweb + REST endpoints + auth.
 - **M5 — Web UI**: dashboard, config, query, time-series graph.
 - **M6 — Packaging & DSN export**: `.deb` for amd64/arm64/armhf; optional DSN-format export.
