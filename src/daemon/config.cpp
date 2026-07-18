@@ -76,6 +76,9 @@ Config Config::load(const std::string& path) {
             else if (key == "port") cfg.db_port = std::stoi(value);
         } else if (section == "api") {
             if (key == "port") cfg.api_port = std::stoi(value);
+            else if (key == "bind") cfg.api_bind = value;
+            else if (key == "schema_file") cfg.schema_file = value;
+            else if (key == "web_root") cfg.web_root = value;
         } else if (current_sensor >= 0) {
             SensorConfig& sc = cfg.sensors[static_cast<size_t>(current_sensor)];
             if (key == "transport") sc.transport = value;

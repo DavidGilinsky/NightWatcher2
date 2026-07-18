@@ -14,8 +14,11 @@
 #include <mysql.h>
 
 #include <cstdlib>
+#include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace nightwatcher::db {
 
@@ -244,6 +247,34 @@ void Database::insert_event(const std::string& source, const std::string& level,
     exec(q.str());
 }
 
+std::vector<EventRow> Database::recent_events(int limit) {
+    if (limit < 1) limit = 1;
+    std::ostringstream q;
+    q << "SELECT id, ts_utc, device_id, source, level, event, detail FROM events "
+         "ORDER BY id DESC LIMIT "
+      << limit;
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) {
+        throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    }
+    std::vector<EventRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) {
+        EventRow e;
+        e.id = row[0] ? std::atoll(row[0]) : 0;
+        e.ts_utc = row[1] ? row[1] : "";
+        e.device_id = row[2] ? row[2] : "";
+        e.source = row[3] ? row[3] : "";
+        e.level = row[4] ? row[4] : "";
+        e.event = row[5] ? row[5] : "";
+        e.detail = row[6] ? row[6] : "";
+        out.push_back(e);
+    }
+    mysql_free_result(res);
+    return out;
+}
+
 long long Database::insert_reading(const std::string& sensor_id, const sqm::Reading& r,
                                    const std::string& ts_utc, const std::string& source,
                                    const std::string& quality) {
@@ -304,6 +335,186 @@ void Database::insert_calibration(const std::string& sensor_id, const sqm::Calib
       << c.temp_light_c << ", " << c.sensor_offset << ", " << c.temp_dark_c << ", '"
       << esc(c.raw) << "')";
     exec(q.str());
+}
+
+namespace {
+
+const char* const kWeatherCols =
+    "id, name, site, model, transport, address, latitude, longitude, elevation_m, "
+    "timezone, poll_interval_s, status, installed_at, notes, created_at";
+
+WeatherStationRow weather_from_row(MYSQL_ROW row) {
+    WeatherStationRow w;
+    w.id = row[0] ? row[0] : "";
+    w.name = row[1] ? row[1] : "";
+    w.site = row[2] ? row[2] : "";
+    w.model = row[3] ? row[3] : "";
+    w.transport = row[4] ? row[4] : "";
+    w.address = row[5] ? row[5] : "";
+    if (row[6]) w.latitude = std::atof(row[6]);
+    if (row[7]) w.longitude = std::atof(row[7]);
+    if (row[8]) w.elevation_m = std::atof(row[8]);
+    w.timezone = row[9] ? row[9] : "";
+    w.poll_interval_s = row[10] ? std::atoi(row[10]) : 300;
+    w.status = row[11] ? row[11] : "";
+    w.installed_at = row[12] ? row[12] : "";
+    w.notes = row[13] ? row[13] : "";
+    w.created_at = row[14] ? row[14] : "";
+    return w;
+}
+
+}  // namespace
+
+void Database::upsert_weather_station(const std::string& id, const WeatherStationFields& f) {
+    std::vector<std::string> cols{"id"};
+    std::vector<std::string> vals{"'" + esc(id) + "'"};
+    std::vector<std::string> ups;
+    const auto addS = [&](const char* c, const std::optional<std::string>& v) {
+        if (v) { cols.emplace_back(c); vals.push_back("'" + esc(*v) + "'"); ups.push_back(std::string(c) + "=VALUES(" + c + ")"); }
+    };
+    const auto addI = [&](const char* c, const std::optional<int>& v) {
+        if (v) { cols.emplace_back(c); vals.push_back(std::to_string(*v)); ups.push_back(std::string(c) + "=VALUES(" + c + ")"); }
+    };
+    const auto addD = [&](const char* c, const std::optional<double>& v) {
+        if (v) { cols.emplace_back(c); vals.push_back(std::to_string(*v)); ups.push_back(std::string(c) + "=VALUES(" + c + ")"); }
+    };
+    addS("name", f.name); addS("site", f.site); addS("model", f.model);
+    addS("transport", f.transport); addS("address", f.address);
+    addD("latitude", f.latitude); addD("longitude", f.longitude); addD("elevation_m", f.elevation_m);
+    addS("timezone", f.timezone); addI("poll_interval_s", f.poll_interval_s);
+    addS("status", f.status); addS("installed_at", f.installed_at); addS("notes", f.notes);
+
+    std::ostringstream q;
+    q << "INSERT INTO weather_stations (";
+    for (size_t i = 0; i < cols.size(); ++i) { if (i) q << ", "; q << cols[i]; }
+    q << ") VALUES (";
+    for (size_t i = 0; i < vals.size(); ++i) { if (i) q << ", "; q << vals[i]; }
+    q << ")";
+    if (!ups.empty()) {
+        q << " ON DUPLICATE KEY UPDATE ";
+        for (size_t i = 0; i < ups.size(); ++i) { if (i) q << ", "; q << ups[i]; }
+    }
+    exec(q.str());
+}
+
+bool Database::update_weather_station(const std::string& id, const WeatherStationFields& f) {
+    if (!find_weather_station(id)) return false;
+    std::vector<std::string> sets;
+    const auto setS = [&](const char* c, const std::optional<std::string>& v) { if (v) sets.push_back(std::string(c) + "='" + esc(*v) + "'"); };
+    const auto setI = [&](const char* c, const std::optional<int>& v) { if (v) sets.push_back(std::string(c) + "=" + std::to_string(*v)); };
+    const auto setD = [&](const char* c, const std::optional<double>& v) { if (v) sets.push_back(std::string(c) + "=" + std::to_string(*v)); };
+    setS("name", f.name); setS("site", f.site); setS("model", f.model);
+    setS("transport", f.transport); setS("address", f.address);
+    setD("latitude", f.latitude); setD("longitude", f.longitude); setD("elevation_m", f.elevation_m);
+    setS("timezone", f.timezone); setI("poll_interval_s", f.poll_interval_s);
+    setS("status", f.status); setS("installed_at", f.installed_at); setS("notes", f.notes);
+    if (sets.empty()) return true;
+    std::ostringstream q;
+    q << "UPDATE weather_stations SET ";
+    for (size_t i = 0; i < sets.size(); ++i) { if (i) q << ", "; q << sets[i]; }
+    q << " WHERE id='" << esc(id) << "'";
+    exec(q.str());
+    return true;
+}
+
+std::vector<WeatherStationRow> Database::weather_stations() {
+    exec(std::string("SELECT ") + kWeatherCols + " FROM weather_stations ORDER BY id");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::vector<WeatherStationRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) out.push_back(weather_from_row(row));
+    mysql_free_result(res);
+    return out;
+}
+
+std::optional<WeatherStationRow> Database::find_weather_station(const std::string& id) {
+    std::ostringstream q;
+    q << "SELECT " << kWeatherCols << " FROM weather_stations WHERE id='" << esc(id) << "' LIMIT 1";
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::optional<WeatherStationRow> out;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) out = weather_from_row(row);
+    mysql_free_result(res);
+    return out;
+}
+
+void Database::remove_weather_station(const std::string& id) {
+    std::ostringstream q;
+    q << "DELETE FROM weather_stations WHERE id='" << esc(id) << "'";
+    exec(q.str());
+}
+
+long long Database::delete_readings_before(const std::string& sensor_id, const std::string& ts_utc) {
+    std::ostringstream q;
+    q << "DELETE FROM readings WHERE sensor_id='" << esc(sensor_id) << "' AND ts_utc < '"
+      << esc(ts_utc) << "'";
+    exec(q.str());
+    return static_cast<long long>(mysql_affected_rows(impl_->conn));
+}
+
+std::vector<TableCount> Database::schema_status() {
+    std::set<std::string> present;
+    exec("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) {
+        if (row[0]) present.insert(row[0]);
+    }
+    mysql_free_result(res);
+
+    static const char* const kKnown[] = {"sensors",          "readings",
+                                         "config_log",       "events",
+                                         "weather_stations", "weather_readings"};
+    std::vector<TableCount> out;
+    for (const char* t : kKnown) {
+        TableCount tc;
+        tc.table = t;
+        tc.present = present.count(t) > 0;
+        if (tc.present) {
+            exec(std::string("SELECT COUNT(*) FROM `") + t + "`");
+            MYSQL_RES* cres = mysql_store_result(impl_->conn);
+            if (cres != nullptr) {
+                if (MYSQL_ROW r = mysql_fetch_row(cres)) tc.rows = r[0] ? std::atoll(r[0]) : 0;
+                mysql_free_result(cres);
+            }
+        }
+        out.push_back(tc);
+    }
+    return out;
+}
+
+void Database::run_schema_script(const std::string& sql) {
+    // Strip line comments ('--' to end of line), then execute each ';'-terminated
+    // statement. Intended for the trusted schema file only.
+    std::istringstream in(sql);
+    std::string line;
+    std::string cleaned;
+    while (std::getline(in, line)) {
+        const auto p = line.find("--");
+        if (p != std::string::npos) line = line.substr(0, p);
+        cleaned += line;
+        cleaned += '\n';
+    }
+    std::string stmt;
+    const auto flush = [&]() {
+        const auto b = stmt.find_first_not_of(" \t\r\n");
+        if (b != std::string::npos) {
+            const auto e = stmt.find_last_not_of(" \t\r\n");
+            exec(stmt.substr(b, e - b + 1));
+        }
+        stmt.clear();
+    };
+    for (const char c : cleaned) {
+        if (c == ';') {
+            flush();
+        } else {
+            stmt += c;
+        }
+    }
+    flush();
 }
 
 }  // namespace nightwatcher::db

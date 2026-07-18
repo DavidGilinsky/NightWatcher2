@@ -87,9 +87,18 @@ if(NW_WITH_DB)
     add_executable(nwdb src/cli/nwdb.cpp)
     target_link_libraries(nwdb PRIVATE nw_db nw_sqm)
 
-    # The daemon records to the database, so it requires the DB layer.
+    # ---- HTTP/JSON API (embedded in the daemon; cpp-httplib + nlohmann/json) ----
+    add_library(nw_api STATIC src/api/http_server.cpp)
+    target_include_directories(nw_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/api)
+    # Vendored headers are SYSTEM includes so their warnings don't fail our strict build.
+    target_include_directories(nw_api SYSTEM PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
+    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core Threads::Threads)
+
+    # The daemon records to the database and serves the API, so it needs the DB layer.
     add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)
-    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db Threads::Threads)
+    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db nw_api Threads::Threads)
 endif()
 
 # ---- Install rules ----
@@ -122,6 +131,10 @@ if(NW_BUILD_TESTS)
         add_executable(db_test tests/db_test.cpp)
         target_link_libraries(db_test PRIVATE nw_db nw_sqm)
         add_test(NAME db_test COMMAND db_test)
+
+        add_executable(api_test tests/api_test.cpp)
+        target_link_libraries(api_test PRIVATE nw_api)
+        add_test(NAME api_test COMMAND api_test)
     endif()
 
     # Software SQM simulator (TCP) for local end-to-end testing without hardware.

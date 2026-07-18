@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -20,11 +21,14 @@
 
 #include "config.hpp"
 #include "database.hpp"
+#include "http_server.hpp"
 #include "logging.hpp"
 #include "nightwatcher/version.hpp"
 #include "scheduler.hpp"
 
+using nightwatcher::ApiConfig;
 using nightwatcher::Config;
+using nightwatcher::HttpServer;
 using nightwatcher::Scheduler;
 using nightwatcher::log_error;
 using nightwatcher::log_info;
@@ -114,6 +118,26 @@ int main(int argc, char** argv) {
     log_info(std::string("nightwatcherd ") + NIGHTWATCHER_VERSION + " starting (db " +
              db_cfg.user + "@" + db_cfg.host + "/" + db_cfg.database + ")");
 
+    // Start the HTTP/JSON API (shared with the web UI). It reads the database per
+    // request, so it keeps running across sensor-list reloads.
+    std::unique_ptr<HttpServer> api;
+    if (cfg.api_port > 0) {
+        ApiConfig api_cfg;
+        api_cfg.bind = cfg.api_bind;
+        api_cfg.port = cfg.api_port;
+        if (const char* tok = std::getenv("NW_API_TOKEN")) api_cfg.token = tok;
+        api_cfg.schema_file = cfg.schema_file;
+        api_cfg.web_root = cfg.web_root;
+        api_cfg.db = db_cfg;
+        api = std::make_unique<HttpServer>(std::move(api_cfg));
+        try {
+            api->start();
+        } catch (const std::exception& e) {
+            log_error(std::string("API failed to start: ") + e.what());
+            api.reset();
+        }
+    }
+
     int exit_code = 0;
     bool reload = true;
     while (reload) {
@@ -153,6 +177,8 @@ int main(int argc, char** argv) {
         }
         sched.join();
     }
+
+    if (api) api->stop();
 
     try {
         db::Database dbh(db_cfg);

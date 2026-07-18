@@ -24,5 +24,12 @@ user = nightwatcher
 # Never store secrets in this file or commit them to git.
 
 [api]
-# Port for the built-in HTTP server (REST API + web UI). Implemented in a later milestone.
+# Built-in HTTP server (REST API + web UI).
 port = 8080
+bind = 127.0.0.1
+# Path to schema.sql, used by POST /api/v1/db/init to create any missing tables.
+schema_file = /usr/share/nightwatcher/schema.sql
+# Static web UI directory, served at / (set once the UI is installed).
+# web_root = /usr/share/nightwatcher/web
+# The API token for write endpoints is read from NW_API_TOKEN (never stored here);
+# writes are disabled until it is set.

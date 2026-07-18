@@ -37,6 +37,9 @@ struct Config {
     std::string db_user = "nightwatcher";
     int db_port = 3306;
     int api_port = 8080;
+    std::string api_bind = "127.0.0.1";
+    std::string schema_file;  // path to schema.sql (for the API's db/init)
+    std::string web_root;     // static web UI directory (optional)
     std::vector<SensorConfig> sensors;
 
     // Load and parse the file at `path`.

@@ -143,6 +143,42 @@ int main() {
         c.raw = "c,00000019.92m,0000300.000s, 022.2C,00000008.71m, 031.2C";
         dbh.insert_calibration(kId, c, kTs);  // must not throw
 
+        // Weather-station CRUD.
+        dbh.remove_weather_station("WXTEST");
+        db::WeatherStationFields wf;
+        wf.name = "Weather Test";
+        wf.model = "Ambient Weather WS-2000";
+        wf.transport = "http";
+        wf.address = "192.168.1.60";
+        wf.latitude = 32.42;
+        wf.longitude = -110.73;
+        dbh.upsert_weather_station("WXTEST", wf);
+        const auto wfound = dbh.find_weather_station("WXTEST");
+        CHECK(wfound.has_value());
+        if (wfound) {
+            CHECK(wfound->model == "Ambient Weather WS-2000");
+            CHECK(wfound->latitude.has_value());
+        }
+        db::WeatherStationFields wupd;
+        wupd.elevation_m = 810.0;
+        CHECK(dbh.update_weather_station("WXTEST", wupd));
+        CHECK(!dbh.update_weather_station("NOPE_WX", wupd));
+        dbh.remove_weather_station("WXTEST");
+        CHECK(!dbh.find_weather_station("WXTEST").has_value());
+
+        // Schema status reports the six known tables, sensors present.
+        const auto st = dbh.schema_status();
+        CHECK(st.size() == 6);
+        bool sensors_present = false;
+        for (const auto& tc : st) {
+            if (tc.table == "sensors") sensors_present = tc.present;
+        }
+        CHECK(sensors_present);
+
+        // Pruning removes the test readings (all are before this far-future cutoff).
+        const long long pruned = dbh.delete_readings_before(kId, "2999-01-01 00:00:00");
+        CHECK(pruned >= 2);
+
         dbh.remove_sensor(kId);  // cleanup
         CHECK(!dbh.find_sensor(kId).has_value());
 

@@ -76,6 +76,60 @@ struct SensorFields {
     std::optional<std::string> notes;
 };
 
+// Full weather-station record (e.g. an Ambient Weather WS-2000).
+struct WeatherStationRow {
+    std::string id;
+    std::string name;
+    std::string site;
+    std::string model;
+    std::string transport;  // "http" | "tcp" | "serial"
+    std::string address;
+    std::optional<double> latitude;
+    std::optional<double> longitude;
+    std::optional<double> elevation_m;
+    std::string timezone;
+    int poll_interval_s = 300;
+    std::string status;
+    std::string installed_at;
+    std::string notes;
+    std::string created_at;
+};
+
+// Editable weather-station fields (only set members are written).
+struct WeatherStationFields {
+    std::optional<std::string> name;
+    std::optional<std::string> site;
+    std::optional<std::string> model;
+    std::optional<std::string> transport;
+    std::optional<std::string> address;
+    std::optional<double>      latitude;
+    std::optional<double>      longitude;
+    std::optional<double>      elevation_m;
+    std::optional<std::string> timezone;
+    std::optional<int>         poll_interval_s;
+    std::optional<std::string> status;
+    std::optional<std::string> installed_at;
+    std::optional<std::string> notes;
+};
+
+// One row of schema_status(): a known table and its row count.
+struct TableCount {
+    std::string table;
+    long long rows = 0;
+    bool present = false;
+};
+
+// One row of recent_events().
+struct EventRow {
+    long long id = 0;
+    std::string ts_utc;
+    std::string device_id;
+    std::string source;
+    std::string level;
+    std::string event;
+    std::string detail;
+};
+
 struct ReadingRow {
     long long id = 0;
     std::string sensor_id;
@@ -118,6 +172,25 @@ public:
     void insert_event(const std::string& source, const std::string& level,
                       const std::string& event, const std::string& detail = "",
                       const std::string& device_id = "");
+
+    // Most-recent events, newest first.
+    std::vector<EventRow> recent_events(int limit = 50);
+
+    // --- Weather stations ---
+    void upsert_weather_station(const std::string& id, const WeatherStationFields& f);
+    bool update_weather_station(const std::string& id, const WeatherStationFields& f);
+    std::vector<WeatherStationRow> weather_stations();
+    std::optional<WeatherStationRow> find_weather_station(const std::string& id);
+    void remove_weather_station(const std::string& id);
+
+    // --- Maintenance ---
+    // Delete readings for a sensor with ts_utc < the given timestamp; returns the
+    // number of rows removed.
+    long long delete_readings_before(const std::string& sensor_id, const std::string& ts_utc);
+
+    // --- Schema ---
+    std::vector<TableCount> schema_status();          // known tables + row counts
+    void run_schema_script(const std::string& sql);   // execute a multi-statement SQL script
 
     // Insert a reading. If ts_utc is empty the database clock (UTC) is used.
     // Returns the new row id, or 0 if a row for (sensor_id, ts_utc) already

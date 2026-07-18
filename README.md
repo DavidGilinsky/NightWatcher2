@@ -27,7 +27,7 @@ that data through an API and a web UI.
 | `sqmctl` | CLI to discover and query a single SQM | Done (M1) |
 | Database | MariaDB store (libmariadb) for readings + configuration/calibration history | Done (M2) |
 | `nwdb` | CLI to register sensors, poll an SQM into the database, and query readings | Done (M2) |
-| REST API | Embedded HTTP server (JSON) to query and configure | Planned (M4) |
+| REST API | Embedded HTTP server (JSON): CRUD, query, DB setup/maintenance, live poll/discover | Core done (M4) |
 | Web UI | Status dashboard, configuration, query, time-series graph | Planned (M5) |
 
 ## Building
@@ -137,12 +137,37 @@ nwdb readings DSN003                  # show recent stored readings
 nwdb cal DSN003                       # read + store calibration
 ```
 
+## API
+
+`nightwatcherd` serves a JSON API on `[api] bind:port` (default `127.0.0.1:8080`), sharing
+the same `nw_db` layer as `nwdb` — so the web UI (M5) drives the same code. Read endpoints
+are open; **write endpoints require `NW_API_TOKEN`** (sent as `Authorization: Bearer <token>`)
+and are disabled until it is set.
+
+```sh
+export NW_API_TOKEN=$(openssl rand -hex 16)
+curl -s localhost:8080/api/v1/health
+curl -s localhost:8080/api/v1/sensors
+curl -s "localhost:8080/api/v1/sensors/DSN003/readings?limit=10"
+curl -s "localhost:8080/api/v1/discover?cidr=172.22.4.0/24"
+
+AUTH="Authorization: Bearer $NW_API_TOKEN"
+curl -s -X POST  localhost:8080/api/v1/sensors -H "$AUTH" \
+  -d '{"id":"DSN003","tcp":"172.22.4.112:10001","name":"Sugarloaf","lat":32.4188,"lon":-110.7345,"elev":2791}'
+curl -s -X PATCH localhost:8080/api/v1/sensors/DSN003 -H "$AUTH" -d '{"elevation_m":2795}'
+curl -s -X POST  localhost:8080/api/v1/sensors/DSN003/poll -H "$AUTH"
+curl -s -X POST  localhost:8080/api/v1/db/init -H "$AUTH"     # create any missing tables
+```
+
+Also: weather-station CRUD (`/api/v1/weather-stations`), `GET /db/status`, and
+`DELETE /sensors/{id}/readings?before=DATE` (pruning).
+
 ## Configuration
 
 Copy [`config/nightwatcher.conf.example`](config/nightwatcher.conf.example) to
 `/etc/nightwatcher/nightwatcher.conf`. It configures only the daemon itself (database
-connection + API port); **sensors are registered in the database** with `nwdb add-sensor`,
-and each sensor's cadence is its `poll_interval_s`.
+connection + API); **sensors are registered in the database** with `nwdb add-sensor` (or the
+API), and each sensor's cadence is its `poll_interval_s`.
 
 ## Running the daemon
 
