@@ -1,0 +1,28 @@
+[Unit]
+Description=NightWatcher2 SQM daemon
+Documentation=https://github.com/DavidGilinsky/NightWatcher2
+After=network-online.target mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/nightwatcherd --config /etc/nightwatcher/nightwatcher.conf
+Restart=on-failure
+RestartSec=5
+
+# Database password (and any other secrets) live here, mode 0600, not in git:
+#   /etc/nightwatcher/nightwatcher.env  ->  NW_DB_PASSWORD=...
+EnvironmentFile=-/etc/nightwatcher/nightwatcher.env
+
+# Runtime hardening (skeleton defaults — revisit as features land).
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+# SQM-LU (USB serial) access needs the device; grant when serial transport is used:
+# SupplementaryGroups=dialout
+# DeviceAllow=/dev/ttyUSB0 rw
+
+[Install]
+WantedBy=multi-user.target

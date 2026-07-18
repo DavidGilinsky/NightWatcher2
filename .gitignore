@@ -1,0 +1,39 @@
+# Build directories
+/build/
+/build-*/
+/out/
+
+# CMake artifacts
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+
+# Object / library / binary files
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.exe
+
+# Test scratch files
+test_nightwatcher.conf
+
+# Local secrets / env
+*.env
+nightwatcher.env
+
+# Editor / IDE
+*.swp
+*~
+.vscode/
+.idea/
+.cache/
+
+# Local tooling (not shared)
+.claude/settings.local.json
+.qodo/

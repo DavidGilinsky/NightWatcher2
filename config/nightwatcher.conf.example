@@ -1,0 +1,30 @@
+# NightWatcher2 daemon configuration (INI-style).
+# Copy to /etc/nightwatcher/nightwatcher.conf and edit for your site.
+
+[daemon]
+# Seconds between polls of each SQM. The Dark Sky Network standard is 300 (5 min).
+interval = 300
+
+[database]
+host = localhost
+name = nightwatcher
+user = nightwatcher
+# The database password is read from the environment variable NW_DB_PASSWORD.
+# Never store secrets in this file or commit them to git.
+
+[api]
+# Port for the built-in HTTP server (REST API + web UI). Implemented in a later milestone.
+port = 8080
+
+# One [sensor:<DSN-id>] block per Sky Quality Meter.
+#   transport = tcp     -> SQM-LE (Ethernet). address = host:port  (default port 10001)
+#   transport = serial  -> SQM-LU (USB).      address = /dev/ttyUSB0
+[sensor:DSN003]
+transport = tcp
+address = 192.168.1.50:10001
+name = Sugarloaf
+
+# [sensor:DSN004]
+# transport = serial
+# address = /dev/ttyUSB0
+# name = Example USB unit

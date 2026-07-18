@@ -1,0 +1,8 @@
+#pragma once
+// This header is generated from version.hpp.in by CMake (configure_file).
+// Do not edit the generated copy under the build directory.
+
+#define NIGHTWATCHER_VERSION       "@PROJECT_VERSION@"
+#define NIGHTWATCHER_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define NIGHTWATCHER_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define NIGHTWATCHER_VERSION_PATCH @PROJECT_VERSION_PATCH@
