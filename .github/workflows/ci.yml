@@ -1,10 +1,12 @@
 # ---------------------------------------------------------------------------
 # Author:        David Gilinsky
 # File:          .github/workflows/ci.yml
-# Purpose:       GitHub Actions CI: amd64 build/test and arm64 cross-compile.
+# Purpose:       GitHub Actions CI: amd64 build/test (with a MariaDB service)
+#                and arm64 cross-compile (database layer disabled).
 # Created:       2026-07-18
 # Last Modified: 2026-07-18
 # Version:       0.1.0
+# License:       GPL-3.0-or-later
 # ---------------------------------------------------------------------------
 name: CI
 
@@ -18,15 +20,39 @@ jobs:
   build-test:
     name: Build & test (amd64)
     runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: nightwatcher
+          MARIADB_USER: nightwatcher
+          MARIADB_PASSWORD: nightwatcher
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
-        run: sudo apt-get update && sudo apt-get install -y build-essential cmake
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libmariadb-dev mariadb-client
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Build
         run: cmake --build build --parallel
+      - name: Load schema
+        run: mysql -h 127.0.0.1 -P 3306 -u nightwatcher -pnightwatcher nightwatcher < sql/schema.sql
       - name: Test
+        env:
+          NW_DB_TEST: "1"
+          NW_DB_HOST: 127.0.0.1
+          NW_DB_PORT: "3306"
+          NW_DB_USER: nightwatcher
+          NW_DB_PASSWORD: nightwatcher
+          NW_DB_NAME: nightwatcher
         run: ctest --test-dir build --output-on-failure
       - name: Smoke-run daemon
         run: ./build/nightwatcherd --version
@@ -43,5 +69,6 @@ jobs:
           cmake -B build-arm64
           -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-aarch64.cmake
           -DNW_BUILD_TESTS=OFF
+          -DNW_WITH_DB=OFF
       - name: Build
         run: cmake --build build-arm64 --parallel

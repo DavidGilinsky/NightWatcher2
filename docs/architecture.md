@@ -50,11 +50,14 @@ C++17 for the core with a C-friendly device layer; CMake build. Linux x86 and AR
 - **M0 — Bootstrap** *(done)*: repo, CMake scaffold, skeleton daemon, CI, docs, schema draft.
 - **M1 — SQM library + `sqmctl`** *(SQM-LE done)*: TCP transport, protocol codec, simulator,
   tests; USB serial transport still pending.
-- **M2 — Database layer**: schema + migrations + `libmariadb` wrapper.
+- **M2 — Database layer** *(done)*: `libmariadb` wrapper (`nw_db`), schema, and the `nwdb`
+  CLI (register sensors, poll an SQM into the DB, query readings).
 - **M3 — Daemon**: scheduler polls SQM → DB; config; logging; systemd unit.
 - **M4 — API**: civetweb + REST endpoints + auth.
 - **M5 — Web UI**: dashboard, config, query, time-series graph.
 - **M6 — Packaging & DSN export**: `.deb` for amd64/arm64/armhf; optional DSN-format export.
+- **Weather integration** *(future)*: poll a co-located weather station (e.g. Ambient Weather
+  WS-2000) into `weather_readings`; the schema is already in place.
 
 The full approved plan lives outside the repo in the planning workspace; this file is the
 in-repo summary kept current as milestones land.

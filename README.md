@@ -25,13 +25,15 @@ that data through an API and a web UI.
 | `nightwatcherd` | Daemon: polls SQM(s) at a configurable interval, records readings, serves the API | Skeleton (M0) |
 | SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol; subnet discovery | SQM-LE + discovery done (M1); USB serial pending |
 | `sqmctl` | CLI to discover and query a single SQM | Done (M1) |
-| Database | MariaDB/MySQL store for readings + configuration/calibration history | Planned (M2) |
+| Database | MariaDB store (libmariadb) for readings + configuration/calibration history | Done (M2) |
+| `nwdb` | CLI to register sensors, poll an SQM into the database, and query readings | Done (M2) |
 | REST API | Embedded HTTP server (JSON) to query and configure | Planned (M4) |
 | Web UI | Status dashboard, configuration, query, time-series graph | Planned (M5) |
 
 ## Building
 
-Requirements: a C++17 compiler, CMake ≥ 3.16.
+Requirements: a C++17 compiler, CMake ≥ 3.16, and `libmariadb-dev` for the database layer
+(or configure with `-DNW_WITH_DB=OFF` to skip it).
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -90,6 +92,41 @@ exercised end-to-end without a physical meter:
 ```sh
 ./build/sqm-sim 10001 &                 # listen on 127.0.0.1:10001
 ./build/sqmctl --tcp 127.0.0.1:10001 read
+```
+
+## Database
+
+Readings and configuration are stored in MariaDB via MariaDB Connector/C (`libmariadb`).
+
+The schema ([sql/schema.sql](sql/schema.sql)) has six tables: `sensors`, `readings` (with a
+`quality` flag for saturated/suspect data), `config_log`, an operational `events` log, and
+`weather_stations` / `weather_readings` for a co-located weather station such as an Ambient
+Weather WS-2000 (polling is a future module). Stored units are metric/SI.
+
+### One-time setup
+
+```sh
+sudo apt install -y mariadb-server libmariadb-dev
+sudo mariadb < sql/setup.sql     # create the database + application user
+sudo mariadb < sql/schema.sql    # create the tables
+```
+
+`setup.sql` creates a development user `nightwatcher` with password `nightwatcher` — change
+it for any real deployment. The tools read the connection from the environment:
+
+```sh
+export NW_DB_HOST=127.0.0.1 NW_DB_PORT=3306
+export NW_DB_USER=nightwatcher NW_DB_PASSWORD=nightwatcher NW_DB_NAME=nightwatcher
+```
+
+### `nwdb`
+
+```sh
+nwdb add-sensor DSN003 --tcp 172.22.4.112:10001 --name Sugarloaf
+nwdb poll DSN003        # read the SQM now and store the reading
+nwdb readings DSN003    # show recent stored readings
+nwdb cal DSN003         # read + store calibration
+nwdb sensors            # list registered sensors
 ```
 
 ## Configuration

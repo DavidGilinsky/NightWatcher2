@@ -1,37 +1,46 @@
 -- ---------------------------------------------------------------------------
 -- Author:        David Gilinsky
 -- File:          sql/schema.sql
--- Purpose:       MariaDB/MySQL schema: sensors, readings, and config_log tables.
+-- Purpose:       MariaDB/MySQL schema: sensors, readings, config_log, events,
+--                and weather_stations/weather_readings tables.
 -- Created:       2026-07-18
 -- Last Modified: 2026-07-18
 -- Version:       0.1.0
+-- License:       GPL-3.0-or-later
 -- ---------------------------------------------------------------------------
 -- NightWatcher2 database schema (MariaDB / MySQL).
--- Draft for Milestone 0; refined and migrated in Milestone 2.
 --
---   mysql -u root -p < sql/schema.sql
+--   (load order: setup.sql first, then this file)
 --
--- Time is stored in UTC. Application code is responsible for supplying UTC values.
+-- Conventions:
+--   * Timestamps are stored in UTC; application code supplies UTC values.
+--   * Stored units are metric/SI (deg C, m/s, mm, hPa); ingest code converts.
+--   * raw_line / raw columns keep the exact device payload so any field we did
+--     not break out can be backfilled later without recreating tables.
 
-CREATE DATABASE IF NOT EXISTS nightwatcher
-    CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- The database and application user are created by setup.sql (run that first).
 USE nightwatcher;
 
 -- One row per Sky Quality Meter / station.
 CREATE TABLE IF NOT EXISTS sensors (
-    id             VARCHAR(32)  NOT NULL,              -- DSN-style id, e.g. 'DSN003'
-    name           VARCHAR(128) NULL,                  -- e.g. 'Sugarloaf'
-    serial_number  VARCHAR(16)  NULL,                  -- Unihedron 8-digit serial
-    model          VARCHAR(32)  NULL,                  -- e.g. 'SQM-LE', 'SQM-LU'
-    protocol_ver   INT          NULL,                  -- from 'ix' unit-info response
-    feature_ver    INT          NULL,                  -- from 'ix' unit-info response
-    latitude       DECIMAL(9,6) NULL,
-    longitude      DECIMAL(9,6) NULL,
-    elevation_m    DECIMAL(7,1) NULL,
-    transport      ENUM('tcp','serial') NOT NULL,
-    address        VARCHAR(128) NOT NULL,              -- 'host:port' or '/dev/ttyUSB0'
-    notes          TEXT         NULL,
-    created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    id              VARCHAR(32)  NOT NULL,               -- DSN-style id, e.g. 'DSN003'
+    name            VARCHAR(128) NULL,                   -- e.g. 'Sugarloaf'
+    site            VARCHAR(64)  NULL,                   -- groups co-located instruments
+    serial_number   VARCHAR(16)  NULL,                   -- Unihedron 8-digit serial
+    model           VARCHAR(32)  NULL,                   -- e.g. 'SQM-LE', 'SQM-LU'
+    protocol_ver    INT          NULL,                   -- from 'ix' unit-info response
+    feature_ver     INT          NULL,                   -- from 'ix' unit-info response
+    latitude        DECIMAL(9,6) NULL,
+    longitude       DECIMAL(9,6) NULL,
+    elevation_m     DECIMAL(7,1) NULL,
+    timezone        VARCHAR(64)  NULL,                   -- IANA tz, e.g. 'America/Phoenix'
+    transport       ENUM('tcp','serial') NOT NULL,
+    address         VARCHAR(128) NOT NULL,               -- 'host:port' or '/dev/ttyUSB0'
+    poll_interval_s INT          NOT NULL DEFAULT 300,   -- per-sensor cadence (seconds)
+    status          ENUM('active','inactive','retired') NOT NULL DEFAULT 'active',
+    installed_at    DATE         NULL,
+    notes           TEXT         NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id)
 ) ENGINE=InnoDB;
 
@@ -39,14 +48,15 @@ CREATE TABLE IF NOT EXISTS sensors (
 CREATE TABLE IF NOT EXISTS readings (
     id             BIGINT       NOT NULL AUTO_INCREMENT,
     sensor_id      VARCHAR(32)  NOT NULL,
-    ts_utc         DATETIME     NOT NULL,              -- time the reading was taken (UTC)
-    mag_arcsec2    DECIMAL(6,3) NOT NULL,              -- sky brightness, mag/arcsec^2
-    freq_hz        BIGINT       NULL,                  -- sensor frequency (Hz)
-    period_counts  BIGINT       NULL,                  -- sensor period (counts @ 460800 Hz)
-    period_s       DECIMAL(12,3) NULL,                 -- sensor period (seconds)
-    temp_c         DECIMAL(5,1) NULL,                  -- sensor temperature (deg C)
+    ts_utc         DATETIME     NOT NULL,                -- time the reading was taken (UTC)
+    mag_arcsec2    DECIMAL(6,3) NOT NULL,                -- sky brightness, mag/arcsec^2
+    freq_hz        BIGINT       NULL,                    -- sensor frequency (Hz)
+    period_counts  BIGINT       NULL,                    -- sensor period (counts @ 460800 Hz)
+    period_s       DECIMAL(12,3) NULL,                   -- sensor period (seconds)
+    temp_c         DECIMAL(5,1) NULL,                    -- sensor temperature (deg C)
+    quality        ENUM('ok','saturated','suspect') NOT NULL DEFAULT 'ok',
     source         ENUM('poll','interval') NOT NULL DEFAULT 'poll',
-    raw_line       VARCHAR(128) NULL,                  -- exact device response, for audit
+    raw_line       VARCHAR(128) NULL,                    -- exact device response, for audit
     created_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uq_sensor_ts (sensor_id, ts_utc),
@@ -61,18 +71,85 @@ CREATE TABLE IF NOT EXISTS config_log (
     sensor_id         VARCHAR(32)  NOT NULL,
     ts_utc            DATETIME     NOT NULL,
     event_type        ENUM('calibration','config_change') NOT NULL,
-    light_cal_offset  DECIMAL(8,2) NULL,               -- cx: light calibration offset (mag)
-    dark_cal_period_s DECIMAL(12,3) NULL,              -- cx: dark calibration period (s)
-    temp_light_c      DECIMAL(5,1) NULL,               -- cx: temp during light calibration
-    temp_dark_c       DECIMAL(5,1) NULL,               -- cx: temp during dark calibration
-    interval_s        INT          NULL,               -- interval-reporting period
-    threshold         DECIMAL(6,3) NULL,               -- interval-reporting threshold
-    raw               VARCHAR(255) NULL,               -- exact device response, for audit
-    changed_by        VARCHAR(64)  NULL,               -- user / process that made the change
+    light_cal_offset  DECIMAL(8,2) NULL,                 -- cx: light calibration offset (mag)
+    dark_cal_period_s DECIMAL(12,3) NULL,                -- cx: dark calibration period (s)
+    temp_light_c      DECIMAL(5,1) NULL,                 -- cx: temp during light calibration
+    sensor_offset     DECIMAL(8,2) NULL,                 -- cx: factory reference sensor offset (mag)
+    temp_dark_c       DECIMAL(5,1) NULL,                 -- cx: temp during dark calibration
+    interval_s        INT          NULL,                 -- interval-reporting period
+    threshold         DECIMAL(6,3) NULL,                 -- interval-reporting threshold
+    raw               VARCHAR(255) NULL,                 -- exact device response, for audit
+    changed_by        VARCHAR(64)  NULL,                 -- user / process that made the change
     note              TEXT         NULL,
     created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_cfg_sensor_ts (sensor_id, ts_utc),
     CONSTRAINT fk_config_sensor FOREIGN KEY (sensor_id)
         REFERENCES sensors (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Operational event log: device up/down, connection errors, daemon lifecycle.
+-- device_id is a free reference (no FK) so events survive device deletion and
+-- may point at a sensor OR a weather station, or be NULL (daemon-wide).
+CREATE TABLE IF NOT EXISTS events (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    ts_utc      DATETIME     NOT NULL,
+    device_id   VARCHAR(32)  NULL,                       -- sensor or weather-station id, or NULL
+    source      VARCHAR(32)  NOT NULL,                   -- 'daemon','sqm','weather','api'
+    level       ENUM('info','warning','error') NOT NULL DEFAULT 'info',
+    event       VARCHAR(64)  NOT NULL,                   -- 'started','connect','disconnect','read_error'
+    detail      TEXT         NULL,
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_events_ts (ts_utc),
+    KEY idx_events_device_ts (device_id, ts_utc)
+) ENGINE=InnoDB;
+
+-- Separate weather stations (e.g. Ambient Weather WS-2000) co-located with SQMs.
+-- Polling is a future module; the tables exist now so no migration is needed later.
+CREATE TABLE IF NOT EXISTS weather_stations (
+    id              VARCHAR(32)  NOT NULL,               -- e.g. 'WX001'
+    name            VARCHAR(128) NULL,
+    site            VARCHAR(64)  NULL,                   -- shared with a co-located sensor
+    model           VARCHAR(64)  NULL,                   -- e.g. 'Ambient Weather WS-2000'
+    transport       VARCHAR(16)  NULL,                   -- 'http','tcp','serial', ...
+    address         VARCHAR(255) NULL,                   -- host:port / URL / device path
+    latitude        DECIMAL(9,6) NULL,
+    longitude       DECIMAL(9,6) NULL,
+    elevation_m     DECIMAL(7,1) NULL,
+    timezone        VARCHAR(64)  NULL,
+    poll_interval_s INT          NOT NULL DEFAULT 300,
+    status          ENUM('active','inactive','retired') NOT NULL DEFAULT 'active',
+    installed_at    DATE         NULL,
+    notes           TEXT         NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id)
+) ENGINE=InnoDB;
+
+-- One row per weather observation. Stored units are metric/SI; ingest converts.
+CREATE TABLE IF NOT EXISTS weather_readings (
+    id                BIGINT       NOT NULL AUTO_INCREMENT,
+    station_id        VARCHAR(32)  NOT NULL,
+    ts_utc            DATETIME     NOT NULL,
+    temp_c            DECIMAL(5,1) NULL,                 -- outdoor temperature
+    humidity_pct      DECIMAL(5,1) NULL,                 -- outdoor relative humidity
+    dew_point_c       DECIMAL(5,1) NULL,
+    pressure_hpa      DECIMAL(7,2) NULL,                 -- relative (sea-level) pressure
+    pressure_abs_hpa  DECIMAL(7,2) NULL,                 -- absolute (station) pressure
+    wind_speed_ms     DECIMAL(6,2) NULL,
+    wind_gust_ms      DECIMAL(6,2) NULL,
+    wind_dir_deg      SMALLINT     NULL,                 -- 0-359
+    rain_rate_mmh     DECIMAL(6,2) NULL,                 -- current rain rate
+    rain_daily_mm     DECIMAL(7,2) NULL,                 -- daily accumulation
+    uv_index          DECIMAL(4,1) NULL,
+    solar_wm2         DECIMAL(7,1) NULL,                 -- solar irradiance (W/m^2)
+    cloud_cover_pct   DECIMAL(5,1) NULL,                 -- if available from a sky/cloud sensor
+    source            VARCHAR(32)  NOT NULL DEFAULT 'poll',
+    raw               TEXT         NULL,                 -- full station payload (JSON), for audit
+    created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_wx_station_ts (station_id, ts_utc),
+    KEY idx_wx_station_ts (station_id, ts_utc),
+    CONSTRAINT fk_weather_station FOREIGN KEY (station_id)
+        REFERENCES weather_stations (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

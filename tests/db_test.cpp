@@ -1,0 +1,129 @@
+// ---------------------------------------------------------------------------
+// Author:        David Gilinsky
+// File:          tests/db_test.cpp
+// Purpose:       Integration test for the database layer. Skips (passes) unless
+//                NW_DB_TEST=1 is set with NW_DB_* connection variables, so the
+//                default test run needs no database server.
+// Created:       2026-07-18
+// Last Modified: 2026-07-18
+// Version:       0.1.0
+// License:       GPL-3.0-or-later
+// ---------------------------------------------------------------------------
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
+
+#include "database.hpp"
+#include "protocol.hpp"
+
+namespace db = nightwatcher::db;
+namespace sqm = nightwatcher::sqm;
+
+static int g_failures = 0;
+
+#define CHECK(cond)                                                       \
+    do {                                                                  \
+        if (!(cond)) {                                                    \
+            std::fprintf(stderr, "CHECK failed at line %d: %s\n",         \
+                         __LINE__, #cond);                                \
+            ++g_failures;                                                 \
+        }                                                                 \
+    } while (0)
+
+int main() {
+    const char* flag = std::getenv("NW_DB_TEST");
+    if (flag == nullptr || std::string(flag) != "1") {
+        std::puts("db_test skipped (set NW_DB_TEST=1 with NW_DB_* to run)");
+        return 0;
+    }
+
+    const std::string kId = "NWTEST";
+    const std::string kTs = "2026-07-18 04:05:06";
+
+    try {
+        db::Database dbh(db::DbConfig::from_env());
+
+        dbh.remove_sensor(kId);  // start from a clean slate
+
+        db::SensorRow s;
+        s.id = kId;
+        s.name = "Integration Test";
+        s.transport = "tcp";
+        s.address = "127.0.0.1:10001";
+        dbh.upsert_sensor(s);
+
+        const auto found = dbh.find_sensor(kId);
+        CHECK(found.has_value());
+        if (found) {
+            CHECK(found->address == "127.0.0.1:10001");
+            CHECK(found->name == "Integration Test");
+        }
+
+        sqm::Reading r;
+        r.mag_arcsec2 = 20.13;
+        r.freq_hz = 123;
+        r.period_counts = 456;
+        r.period_s = 2.5;
+        r.temp_c = 15.5;
+        r.raw = "r, 20.13m,0000000123Hz,0000000456c,0000002.500s, 015.5C";
+        const long long id = dbh.insert_reading(kId, r, kTs, "poll", "ok");
+        CHECK(id > 0);
+
+        // Re-inserting the same (sensor, ts) is ignored (unique key).
+        const long long dup = dbh.insert_reading(kId, r, kTs, "poll", "ok");
+        CHECK(dup == 0);
+
+        // A saturated (daytime) reading carrying an explicit quality flag.
+        sqm::Reading r2 = r;
+        r2.mag_arcsec2 = 0.0;
+        r2.raw = "r, 00.00m,0000555820Hz,0000000000c,0000000.000s, 061.5C";
+        const std::string kTs2 = "2026-07-18 04:10:06";
+        const long long id2 = dbh.insert_reading(kId, r2, kTs2, "poll", "saturated");
+        CHECK(id2 > 0);
+
+        const auto rows = dbh.readings(kId, 10);
+        CHECK(rows.size() >= 2);
+        bool matched_ok = false;
+        bool matched_sat = false;
+        for (const auto& rr : rows) {
+            if (rr.ts_utc.rfind(kTs, 0) == 0) {
+                matched_ok = true;
+                CHECK(std::fabs(rr.mag_arcsec2 - 20.13) < 0.01);
+                CHECK(rr.freq_hz == 123);
+                CHECK(rr.period_counts == 456);
+                CHECK(std::fabs(rr.temp_c - 15.5) < 0.01);
+                CHECK(rr.quality == "ok");
+            }
+            if (rr.ts_utc.rfind(kTs2, 0) == 0) {
+                matched_sat = true;
+                CHECK(rr.quality == "saturated");
+            }
+        }
+        CHECK(matched_ok);
+        CHECK(matched_sat);
+
+        sqm::Calibration c;
+        c.light_cal_offset = 19.92;
+        c.dark_cal_period_s = 300.0;
+        c.temp_light_c = 22.2;
+        c.sensor_offset = 8.71;
+        c.temp_dark_c = 31.2;
+        c.raw = "c,00000019.92m,0000300.000s, 022.2C,00000008.71m, 031.2C";
+        dbh.insert_calibration(kId, c, kTs);  // must not throw
+
+        dbh.remove_sensor(kId);  // cleanup
+        CHECK(!dbh.find_sensor(kId).has_value());
+
+        if (g_failures == 0) {
+            std::puts("db_test passed");
+            return 0;
+        }
+        std::fprintf(stderr, "db_test FAILED (%d checks)\n", g_failures);
+        return 1;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "db_test ERROR: %s\n", e.what());
+        return 1;
+    }
+}
