@@ -88,6 +88,30 @@ function drawGraph(container, readings) {
   new uPlot(opts, [xs, mag, temp], container);
 }
 
+function drawWeatherGraph(container, readings) {
+  const rs = [...readings].reverse();
+  const xs = rs.map(r => Date.parse(r.ts_utc.replace(' ', 'T') + 'Z') / 1000);
+  const temp = rs.map(r => r.temp_c);
+  const hum = rs.map(r => r.humidity_pct);
+  const opts = {
+    width: Math.max(320, container.clientWidth - 20), height: 320,
+    scales: { x: { time: true } },
+    series: [
+      {},
+      { label: 'temp °C', stroke: '#ff8c42', width: 2, scale: 'temp' },
+      { label: 'humidity %', stroke: '#4ea1ff', width: 1, scale: 'hum' },
+    ],
+    axes: [
+      { stroke: '#8fa0c0', grid: { stroke: '#26324f' }, ticks: { stroke: '#26324f' } },
+      { scale: 'temp', stroke: '#8fa0c0', grid: { stroke: '#26324f' }, ticks: { stroke: '#26324f' } },
+      { scale: 'hum', side: 1, stroke: '#8fa0c0', grid: { show: false } },
+    ],
+  };
+  container.innerHTML = '';
+  // eslint-disable-next-line no-undef
+  new uPlot(opts, [xs, temp, hum], container);
+}
+
 // ---- views -----------------------------------------------------------------
 async function viewDashboard() {
   const frag = document.createDocumentFragment();
@@ -98,36 +122,69 @@ async function viewDashboard() {
     el('span', { class: 'muted' }, 'nightwatcherd ' + health.version)));
 
   const sensors = await api('GET', '/sensors');
-  if (!sensors.length) {
-    frag.append(el('p', { class: 'muted' }, 'No sensors registered yet — add one under Sensors.'));
+  let stations = [];
+  try { stations = await api('GET', '/weather-stations'); } catch (_) { /* weather is optional */ }
+  if (!sensors.length && !stations.length) {
+    frag.append(el('p', { class: 'muted' }, 'Nothing registered yet — add a sensor or weather station.'));
     return frag;
   }
-  const grid = el('div', { class: 'grid' });
-  for (const s of sensors) {
-    let latest = null;
-    try { const r = await api('GET', `/sensors/${encodeURIComponent(s.id)}/readings?limit=1`); latest = r[0]; } catch (_) { /* ignore */ }
-    grid.append(el('div', { class: 'card' },
-      el('h3', {}, s.name || s.id, el('span', { class: 'pill ' + (s.status || '') }, s.status || '')),
-      el('div', { class: 'muted', style: 'margin-bottom:.5rem' }, s.id + (s.site ? ' · ' + s.site : '')),
-      latest
-        ? el('div', {},
-          el('div', { class: 'big' }, fmtMag(latest.mag_arcsec2), el('span', { class: 'unit' }, ' mag/arcsec²')),
-          el('div', { class: 'row', style: 'margin-top:.35rem' },
-            el('span', { class: 'pill ' + (latest.quality || '') }, latest.quality || ''),
-            el('span', { class: 'muted' }, fmtNum(latest.temp_c) + ' °C'),
-            el('span', { class: 'muted' }, latest.ts_utc + ' UTC')))
-        : el('div', { class: 'muted' }, 'no readings yet'),
-      isAdmin()
-        ? el('div', { style: 'margin-top:.7rem' },
-          el('button', {
-            class: 'btn sm', onclick: async () => {
-              try { await api('POST', `/sensors/${encodeURIComponent(s.id)}/poll`); renderView(); }
-              catch (e) { alert(e.message); }
-            }
-          }, 'Poll now'))
-        : null));
+  if (sensors.length) {
+    const grid = el('div', { class: 'grid' });
+    for (const s of sensors) {
+      let latest = null;
+      try { const r = await api('GET', `/sensors/${encodeURIComponent(s.id)}/readings?limit=1`); latest = r[0]; } catch (_) { /* ignore */ }
+      grid.append(el('div', { class: 'card' },
+        el('h3', {}, s.name || s.id, el('span', { class: 'pill ' + (s.status || '') }, s.status || '')),
+        el('div', { class: 'muted', style: 'margin-bottom:.5rem' }, s.id + (s.site ? ' · ' + s.site : '')),
+        latest
+          ? el('div', {},
+            el('div', { class: 'big' }, fmtMag(latest.mag_arcsec2), el('span', { class: 'unit' }, ' mag/arcsec²')),
+            el('div', { class: 'row', style: 'margin-top:.35rem' },
+              el('span', { class: 'pill ' + (latest.quality || '') }, latest.quality || ''),
+              el('span', { class: 'muted' }, fmtNum(latest.temp_c) + ' °C'),
+              el('span', { class: 'muted' }, latest.ts_utc + ' UTC')))
+          : el('div', { class: 'muted' }, 'no readings yet'),
+        isAdmin()
+          ? el('div', { style: 'margin-top:.7rem' },
+            el('button', {
+              class: 'btn sm', onclick: async () => {
+                try { await api('POST', `/sensors/${encodeURIComponent(s.id)}/poll`); renderView(); }
+                catch (e) { alert(e.message); }
+              }
+            }, 'Poll now'))
+          : null));
+    }
+    frag.append(grid);
   }
-  frag.append(grid);
+  if (stations.length) {
+    frag.append(el('h3', { style: 'margin-top:1.2rem' }, 'Weather'));
+    const wgrid = el('div', { class: 'grid' });
+    for (const w of stations) {
+      let latest = null;
+      try { const r = await api('GET', `/weather-stations/${encodeURIComponent(w.id)}/readings?limit=1`); latest = r[0]; } catch (_) { /* ignore */ }
+      wgrid.append(el('div', { class: 'card' },
+        el('h3', {}, w.name || w.id, el('span', { class: 'pill ' + (w.status || '') }, w.status || '')),
+        el('div', { class: 'muted', style: 'margin-bottom:.5rem' }, (PROVIDERS[w.provider] || w.provider || '') + (w.site ? ' · ' + w.site : '')),
+        latest
+          ? el('div', {},
+            el('div', { class: 'big' }, fmtNum(latest.temp_c), el('span', { class: 'unit' }, ' °C')),
+            el('div', { class: 'row', style: 'margin-top:.35rem' },
+              latest.humidity_pct != null ? el('span', { class: 'muted' }, fmtNum(latest.humidity_pct) + ' % RH') : null,
+              latest.wind_speed_ms != null ? el('span', { class: 'muted' }, fmtNum(latest.wind_speed_ms) + ' m/s') : null,
+              el('span', { class: 'muted' }, latest.ts_utc + ' UTC')))
+          : el('div', { class: 'muted' }, 'no readings yet'),
+        isAdmin()
+          ? el('div', { style: 'margin-top:.7rem' },
+            el('button', {
+              class: 'btn sm', onclick: async () => {
+                try { await api('POST', `/weather-stations/${encodeURIComponent(w.id)}/poll`); renderView(); }
+                catch (e) { alert(e.message); }
+              }
+            }, 'Poll now'))
+          : null));
+    }
+    frag.append(wgrid);
+  }
   return frag;
 }
 
@@ -202,6 +259,8 @@ async function viewSensors() {
   return frag;
 }
 
+const PROVIDERS = { ambientweather: 'Ambient Weather Network', wunderground: 'Weather Underground' };
+
 function weatherForm(w) {
   const editing = !!w;
   const f = el('form', { class: 'form card', style: 'margin-bottom:1rem' });
@@ -211,25 +270,54 @@ function weatherForm(w) {
   g.append(field('Name', 'name', editing ? w.name : ''));
   g.append(field('Site', 'site', editing ? w.site : ''));
   g.append(field('Model', 'model', editing ? w.model : 'Ambient Weather WS-2000'));
-  g.append(field('Transport', 'transport', editing ? w.transport : 'http'));
-  g.append(field('Address', 'address', editing ? w.address : ''));
+  const providerSel = el('select', { name: 'provider' },
+    ...Object.entries(PROVIDERS).map(([v, label]) =>
+      el('option', { value: v, selected: editing && w.provider === v ? 'selected' : null }, label)));
+  g.append(el('label', {}, 'Provider', providerSel));
   g.append(field('Latitude', 'latitude', editing ? w.latitude : '', 'number'));
   g.append(field('Longitude', 'longitude', editing ? w.longitude : '', 'number'));
   g.append(field('Elevation (m)', 'elevation_m', editing ? w.elevation_m : '', 'number'));
   g.append(field('Timezone', 'timezone', editing ? w.timezone : ''));
+  g.append(field('Poll interval (s)', 'poll_interval_s', editing ? w.poll_interval_s : 300, 'number', '1'));
+  const statusSel = el('select', { name: 'status' },
+    ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: editing && w.status === o ? 'selected' : null }, o)));
+  g.append(el('label', {}, 'Status', statusSel));
   f.append(g);
+
+  // Provider-specific credentials (secrets show as *** when already set).
+  f.append(el('h3', { style: 'margin-top:.6rem' }, 'Provider settings'));
+  const cfgWrap = el('div', { class: 'form-grid' });
+  const cfg = (editing && w.config && typeof w.config === 'object') ? w.config : {};
+  const renderCfg = () => {
+    cfgWrap.innerHTML = '';
+    if (providerSel.value === 'ambientweather') {
+      cfgWrap.append(field('Application key', 'cfg_applicationKey', cfg.applicationKey || ''));
+      cfgWrap.append(field('API key', 'cfg_apiKey', cfg.apiKey || ''));
+      cfgWrap.append(field('Station MAC (optional)', 'cfg_macAddress', cfg.macAddress || ''));
+    } else {
+      cfgWrap.append(field('Station ID', 'cfg_stationId', cfg.stationId || ''));
+      cfgWrap.append(field('API key', 'cfg_apiKey', cfg.apiKey || ''));
+    }
+  };
+  providerSel.addEventListener('change', renderCfg);
+  renderCfg();
+  f.append(cfgWrap);
+
   const err = el('div'); f.append(err);
-  f.append(el('div', { class: 'row' },
+  f.append(el('div', { class: 'row', style: 'margin-top:.6rem' },
     el('button', { class: 'btn', type: 'submit' }, editing ? 'Save' : 'Add'),
     editing ? el('button', { class: 'btn ghost', type: 'button', onclick: () => { editingWeather = null; renderView(); } }, 'Cancel') : null));
   f.addEventListener('submit', async e => {
     e.preventDefault();
     const fd = new FormData(f);
     const body = {};
+    const config = {};
     for (const [k, v] of fd.entries()) {
+      if (k.startsWith('cfg_')) { if (v !== '') config[k.slice(4)] = v; continue; }
       if (v === '') continue;
-      body[k] = ['latitude', 'longitude', 'elevation_m'].includes(k) ? Number(v) : v;
+      body[k] = ['latitude', 'longitude', 'elevation_m', 'poll_interval_s'].includes(k) ? Number(v) : v;
     }
+    body.config = config;
     try {
       if (editing) { delete body.id; await api('PATCH', `/weather-stations/${encodeURIComponent(w.id)}`, body); }
       else { if (!body.id) { err.innerHTML = ''; err.append(msg('err', 'ID is required')); return; } await api('POST', '/weather-stations', body); }
@@ -247,12 +335,21 @@ async function viewWeather() {
   const cols = [
     { label: 'ID', render: w => w.id },
     { label: 'Name', render: w => w.name || '—' },
-    { label: 'Model', render: w => w.model || '—' },
-    { label: 'Connection', render: w => `${w.transport || ''} ${w.address || ''}` },
+    { label: 'Provider', render: w => PROVIDERS[w.provider] || w.provider || '—' },
+    { label: 'Interval', render: w => w.poll_interval_s + 's' },
     { label: 'Status', render: w => el('span', { class: 'pill ' + (w.status || '') }, w.status) },
   ];
   if (isAdmin()) cols.push({
     label: '', render: w => el('div', { class: 'row' },
+      el('button', {
+        class: 'btn sm', onclick: async () => {
+          try {
+            const r = await api('POST', `/weather-stations/${encodeURIComponent(w.id)}/poll`);
+            alert('Fetched: ' + (r.temp_c != null ? r.temp_c.toFixed(1) + ' °C' : 'no temp') + ', ' +
+                  (r.humidity_pct != null ? r.humidity_pct + '% RH' : 'no humidity'));
+          } catch (e) { alert('Poll failed: ' + e.message); }
+        }
+      }, 'Poll'),
       el('button', { class: 'btn ghost sm', onclick: () => { editingWeather = w; renderView(); } }, 'Edit'),
       el('button', {
         class: 'btn danger sm', onclick: async () => {
@@ -270,9 +367,21 @@ async function viewQuery() {
   const frag = document.createDocumentFragment();
   frag.append(el('h2', {}, 'Query & graph'));
   const sensors = await api('GET', '/sensors');
-  if (!sensors.length) { frag.append(el('p', { class: 'muted' }, 'No sensors yet.')); return frag; }
+  let stations = [];
+  try { stations = await api('GET', '/weather-stations'); } catch (_) { /* weather is optional */ }
+  if (!sensors.length && !stations.length) { frag.append(el('p', { class: 'muted' }, 'No sensors or weather stations yet.')); return frag; }
 
-  const sel = el('select', { style: 'max-width:260px' }, ...sensors.map(s => el('option', { value: s.id }, s.name ? `${s.name} (${s.id})` : s.id)));
+  const sel = el('select', { style: 'max-width:260px' });
+  if (sensors.length) {
+    const og = el('optgroup', { label: 'Sensors' });
+    for (const s of sensors) og.append(el('option', { value: 'sensor:' + s.id }, s.name ? `${s.name} (${s.id})` : s.id));
+    sel.append(og);
+  }
+  if (stations.length) {
+    const og = el('optgroup', { label: 'Weather stations' });
+    for (const w of stations) og.append(el('option', { value: 'weather:' + w.id }, w.name ? `${w.name} (${w.id})` : w.id));
+    sel.append(og);
+  }
   const rangeSel = el('select', {},
     el('option', { value: 'day' }, 'Last 24 hours'),
     el('option', { value: 'week', selected: 'selected' }, 'Last 7 days'),
@@ -301,19 +410,38 @@ async function viewQuery() {
     const p = new URLSearchParams({ limit: '50000' });
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    const idx = sel.value.indexOf(':');
+    const kind = sel.value.slice(0, idx);
+    const id = sel.value.slice(idx + 1);
+    const path = kind === 'weather'
+      ? `/weather-stations/${encodeURIComponent(id)}/readings`
+      : `/sensors/${encodeURIComponent(id)}/readings`;
     try {
-      const rs = await api('GET', `/sensors/${encodeURIComponent(sel.value)}/readings?${p}`);
+      const rs = await api('GET', `${path}?${p}`);
       caption.textContent = `${rs.length} reading(s)` + (from ? `  ·  from ${from} UTC` : '') + (to ? `  to ${to} UTC` : '');
       if (!rs.length) { chart.innerHTML = ''; chart.append(el('p', { class: 'muted' }, 'No readings in this range.')); tblWrap.innerHTML = ''; return; }
-      drawGraph(chart, rs);
-      const cols = [
-        { label: 'Time (UTC)', render: r => r.ts_utc },
-        { label: 'mag/arcsec²', render: r => fmtMag(r.mag_arcsec2) },
-        { label: 'temp °C', render: r => fmtNum(r.temp_c) },
-        { label: 'freq Hz', render: r => r.freq_hz },
-        { label: 'quality', render: r => el('span', { class: 'pill ' + (r.quality || '') }, r.quality) },
-        { label: 'source', render: r => r.source },
-      ];
+      let cols;
+      if (kind === 'weather') {
+        drawWeatherGraph(chart, rs);
+        cols = [
+          { label: 'Time (UTC)', render: r => r.ts_utc },
+          { label: 'temp °C', render: r => fmtNum(r.temp_c) },
+          { label: 'humidity %', render: r => fmtNum(r.humidity_pct) },
+          { label: 'wind m/s', render: r => fmtNum(r.wind_speed_ms) },
+          { label: 'pressure hPa', render: r => fmtNum(r.pressure_hpa) },
+          { label: 'rain mm/h', render: r => fmtNum(r.rain_rate_mmh) },
+        ];
+      } else {
+        drawGraph(chart, rs);
+        cols = [
+          { label: 'Time (UTC)', render: r => r.ts_utc },
+          { label: 'mag/arcsec²', render: r => fmtMag(r.mag_arcsec2) },
+          { label: 'temp °C', render: r => fmtNum(r.temp_c) },
+          { label: 'freq Hz', render: r => r.freq_hz },
+          { label: 'quality', render: r => el('span', { class: 'pill ' + (r.quality || '') }, r.quality) },
+          { label: 'source', render: r => r.source },
+        ];
+      }
       tblWrap.innerHTML = ''; tblWrap.append(table(cols, rs));
     } catch (e) { chart.innerHTML = ''; chart.append(msg('err', e.message)); }
   };
@@ -325,7 +453,7 @@ async function viewQuery() {
   sel.addEventListener('change', load);
 
   frag.append(el('div', { class: 'toolbar' },
-    el('span', { class: 'muted' }, 'Sensor'), sel,
+    el('span', { class: 'muted' }, 'Source'), sel,
     el('span', { class: 'muted' }, 'Range'), rangeSel,
     customWrap,
     el('button', { class: 'btn', onclick: load }, 'Load')));
