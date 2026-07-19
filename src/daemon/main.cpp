@@ -27,6 +27,7 @@
 #include "config.hpp"
 #include "database.hpp"
 #include "http_server.hpp"
+#include "tls_cert.hpp"
 #include "logging.hpp"
 #include "nightwatcher/version.hpp"
 #include "password.hpp"
@@ -168,6 +169,7 @@ int main(int argc, char** argv) {
         if (cfg.api_port <= 0) return;
         std::string bind = cfg.api_bind;
         int port = cfg.api_port;
+        bool tls = cfg.api_tls;
         try {
             db::Database sdb(db_cfg);
             if (auto v = sdb.get_setting("api_bind"); v && !v->empty()) bind = *v;
@@ -175,7 +177,27 @@ int main(int argc, char** argv) {
                 const int p = std::atoi(v->c_str());
                 if (p > 0 && p < 65536) port = p;
             }
+            if (auto v = sdb.get_setting("api_tls"); v) tls = (*v == "on");
         } catch (const std::exception&) { /* settings unavailable; use config-file values */ }
+
+        // When TLS is on, make sure a cert/key pair exists (generate a
+        // self-signed one on first use). If setup fails, log and fall back to
+        // plain HTTP rather than refusing to serve.
+        std::string tls_cert, tls_key;
+        if (tls) {
+            char hn[256] = {0};
+            if (gethostname(hn, sizeof(hn) - 1) != 0) hn[0] = '\0';
+            const std::string cn = hn[0] ? hn : "nightwatcher";
+            std::string info;
+            if (nightwatcher::ensure_self_signed_cert(cfg.api_tls_cert, cfg.api_tls_key, cn, info)) {
+                tls_cert = cfg.api_tls_cert;
+                tls_key = cfg.api_tls_key;
+                log_info("TLS enabled \xe2\x80\x94 " + info);
+            } else {
+                log_error("TLS requested but certificate setup failed (" + info +
+                          "); serving plain HTTP");
+            }
+        }
 
         std::string tok;
         if (const char* t = std::getenv("NW_API_TOKEN")) tok = t;
@@ -186,6 +208,8 @@ int main(int argc, char** argv) {
             ac.token = tok;
             ac.schema_file = cfg.schema_file;
             ac.web_root = cfg.web_root;
+            ac.tls_cert = tls_cert;
+            ac.tls_key = tls_key;
             ac.db = db_cfg;
             // Off localhost, require auth for reads too — never expose readings
             // world-open on the LAN. The localhost fallback below re-enables open

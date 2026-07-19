@@ -51,6 +51,14 @@ nightwatcher.env
 # SQM/observation data exports
 *.dat
 
+# TLS material — auto-generated self-signed certs and (secret) private keys must
+# never be committed. The daemon writes these to a tls/ dir beside the config.
+*.pem
+*.key
+*-cert.pem
+*-key.pem
+tls/
+
 # Editor / IDE
 *.swp
 *~

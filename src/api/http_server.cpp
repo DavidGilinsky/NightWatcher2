@@ -39,7 +39,9 @@ namespace nightwatcher {
 
 struct HttpServer::Impl {
     ApiConfig cfg;
-    httplib::Server srv;
+    // Either a plain httplib::Server or an SSLServer, chosen at start() from the
+    // TLS config. Held by base pointer so the route setup below is identical.
+    std::unique_ptr<httplib::Server> srv;
     std::thread thread;
     explicit Impl(ApiConfig c) : cfg(std::move(c)) {}
 };
@@ -393,7 +395,19 @@ HttpServer::~HttpServer() {
 }
 
 void HttpServer::start() {
-    httplib::Server& srv = impl_->srv;
+    const bool run_tls = !impl_->cfg.tls_cert.empty() && !impl_->cfg.tls_key.empty();
+    if (run_tls) {
+        auto ssl = std::make_unique<httplib::SSLServer>(impl_->cfg.tls_cert.c_str(),
+                                                        impl_->cfg.tls_key.c_str());
+        if (!ssl->is_valid()) {
+            throw std::runtime_error("TLS certificate/key invalid or unreadable (" +
+                                     impl_->cfg.tls_cert + ", " + impl_->cfg.tls_key + ")");
+        }
+        impl_->srv = std::move(ssl);
+    } else {
+        impl_->srv = std::make_unique<httplib::Server>();
+    }
+    httplib::Server& srv = *impl_->srv;
     const db::DbConfig dbc = impl_->cfg.db;
     const std::string token = impl_->cfg.token;
     const std::string schema_file = impl_->cfg.schema_file;
@@ -444,14 +458,16 @@ void HttpServer::start() {
     // Web-server settings (bind/port). Admin-only. Changes are stored and applied
     // when the daemon restarts; the response reports both the running and the
     // configured values so the UI can prompt for a restart.
-    const auto settings_json = [run_bind, run_port](db::Database& db) {
+    const auto settings_json = [run_bind, run_port, run_tls](db::Database& db) {
         std::string cbind = run_bind;
         int cport = run_port;
+        bool ctls = run_tls;
         if (auto v = db.get_setting("api_bind"); v && !v->empty()) cbind = *v;
         if (auto v = db.get_setting("api_port"); v && !v->empty()) cport = std::atoi(v->c_str());
-        return json{{"running", {{"bind", run_bind}, {"port", run_port}}},
-                    {"configured", {{"bind", cbind}, {"port", cport}}},
-                    {"restart_required", (cbind != run_bind || cport != run_port)}};
+        if (auto v = db.get_setting("api_tls"); v) ctls = (*v == "on");
+        return json{{"running", {{"bind", run_bind}, {"port", run_port}, {"tls", run_tls}}},
+                    {"configured", {{"bind", cbind}, {"port", cport}, {"tls", ctls}}},
+                    {"restart_required", (cbind != run_bind || cport != run_port || ctls != run_tls)}};
     };
     srv.Get("/api/v1/settings",
             [dbc, token, settings_json](const httplib::Request& req, httplib::Response& res) {
@@ -479,6 +495,15 @@ void HttpServer::start() {
                         else if (body["port"].is_string()) p = std::atoi(body["port"].get<std::string>().c_str());
                         if (p < 1 || p > 65535) { send_err(res, 400, "port out of range (1-65535)"); return; }
                         db.set_setting("api_port", std::to_string(p));
+                    }
+                    if (body.contains("tls")) {
+                        bool on = false;
+                        if (body["tls"].is_boolean()) on = body["tls"].get<bool>();
+                        else if (body["tls"].is_string()) {
+                            const std::string s = body["tls"].get<std::string>();
+                            on = (s == "on" || s == "true" || s == "1" || s == "yes");
+                        }
+                        db.set_setting("api_tls", on ? "on" : "off");
                     }
                     send(res, 200, settings_json(db));
                 } catch (const std::exception& e) { send_err(res, 500, e.what()); }
@@ -1000,12 +1025,13 @@ void HttpServer::start() {
                                  std::to_string(impl_->cfg.port));
     }
     impl_->thread = std::thread([&srv]() { srv.listen_after_bind(); });
-    log_info("API listening on http://" + impl_->cfg.bind + ":" + std::to_string(impl_->cfg.port) +
+    log_info("API listening on " + std::string(run_tls ? "https://" : "http://") + impl_->cfg.bind +
+             ":" + std::to_string(impl_->cfg.port) +
              (token.empty() ? " (writes require login)" : " (writes require login or the API token)"));
 }
 
 void HttpServer::stop() {
-    if (impl_->srv.is_running()) impl_->srv.stop();
+    if (impl_->srv && impl_->srv->is_running()) impl_->srv->stop();
     if (impl_->thread.joinable()) impl_->thread.join();
 }
 

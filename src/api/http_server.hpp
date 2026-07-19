@@ -25,6 +25,11 @@ struct ApiConfig {
     std::string token;        // NW_API_TOKEN; empty disables write endpoints
     std::string schema_file;  // path to schema.sql for POST /db/init
     std::string web_root;     // static files directory (optional)
+    // When both are set, the server listens with TLS (HTTPS) using these PEM
+    // files; empty = plain HTTP. The daemon generates a self-signed pair here
+    // when the operator enables TLS and none exists yet.
+    std::string tls_cert;
+    std::string tls_key;
     db::DbConfig db;
     // When true, read endpoints also require a valid session or API token, not
     // just writes. The daemon sets this whenever the server is bound off

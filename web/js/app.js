@@ -755,11 +755,12 @@ async function viewServer() {
   try { s = await api('GET', '/settings'); }
   catch (e) { frag.append(msg('err', e.message)); return frag; }
   const cfg = s.configured, run = s.running;
+  const scheme = t => t ? 'https' : 'http';
 
   frag.append(el('p', { class: 'muted', style: 'margin-bottom:.6rem' },
-    `Currently listening on ${run.bind}:${run.port}.`));
+    `Currently listening on ${scheme(run.tls)}://${run.bind}:${run.port}.`));
   if (s.restart_required) {
-    frag.append(msg('warn', `Pending change: configured ${cfg.bind}:${cfg.port}, still running on ${run.bind}:${run.port}. Restart the daemon to apply.`));
+    frag.append(msg('warn', `Pending change: configured ${scheme(cfg.tls)}://${cfg.bind}:${cfg.port}, still running on ${scheme(run.tls)}://${run.bind}:${run.port}. Restart the daemon to apply.`));
   }
 
   const f = el('form', { class: 'form card', style: 'margin-bottom:1rem' });
@@ -772,15 +773,29 @@ async function viewServer() {
   f.append(el('div', { class: 'muted', style: 'font-size:.82rem;margin-top:.3rem' },
     '127.0.0.1 = localhost only  ·  0.0.0.0 = all interfaces  ·  or a specific interface IP.'));
 
+  const tlsInput = el('input', { name: 'tls', type: 'checkbox', style: 'width:auto;margin:0' });
+  tlsInput.checked = !!cfg.tls;
+  f.append(el('label', { class: 'row', style: 'gap:.5rem;margin-top:.6rem;color:var(--text)' },
+    tlsInput, 'Serve over HTTPS (TLS)'));
+  f.append(el('div', { class: 'muted', style: 'font-size:.82rem' },
+    'A self-signed certificate is generated automatically on first use. Browsers show a one-time warning you can accept; the connection is encrypted either way.'));
+
   const warn = el('div', { style: 'margin-top:.5rem' });
   const updateWarn = () => {
     const b = bindInput.value.trim();
     const local = b === '' || b === '127.0.0.1' || b === 'localhost' || b === '::1';
     warn.innerHTML = '';
-    if (!local) warn.append(msg('warn',
-      '⚠ Off localhost, the UI and API become reachable across your network. In this mode every request — reads included — requires a login or the API token, so set a strong admin password first. Traffic is still plain HTTP, so only expose this on a trusted network.'));
+    if (!local) {
+      const tail = tlsInput.checked
+        ? 'Traffic is encrypted with TLS.'
+        : 'Traffic is still plain HTTP — enable HTTPS below, or only expose this on a trusted network.';
+      warn.append(msg('warn',
+        '⚠ Off localhost, the UI and API become reachable across your network. In this mode every request — reads included — requires a login or the API token, so set a strong admin password first. ' + tail));
+    }
   };
-  bindInput.addEventListener('input', updateWarn); updateWarn();
+  bindInput.addEventListener('input', updateWarn);
+  tlsInput.addEventListener('change', updateWarn);
+  updateWarn();
   f.append(warn);
 
   const out = el('div'); f.append(out);
@@ -788,12 +803,23 @@ async function viewServer() {
     out.innerHTML = '';
     const port = Number(f.querySelector('input[name="port"]').value);
     try {
-      await api('PUT', '/settings', { bind: bindInput.value.trim(), port });
+      await api('PUT', '/settings', { bind: bindInput.value.trim(), port, tls: tlsInput.checked });
       const r = await api('POST', '/settings/apply', {});
-      const cb = r.configured.bind, cp = r.configured.port;
-      out.append(msg('warn', `Server restarting on ${cb}:${cp} — reconnecting…`));
-      // Poll the current origin until the server is back, then reload. If the
-      // bind moved off the address this page is on, it can't reconnect here.
+      const cb = r.configured.bind, cp = r.configured.port, ctls = !!r.configured.tls;
+      const sc = ctls ? 'https' : 'http';
+      const host = (cb === '0.0.0.0' || cb === '::') ? location.hostname : cb;
+      const newUrl = `${sc}://${host}:${cp}/`;
+      const manual = () => {
+        out.innerHTML = '';
+        out.append(msg('warn', `The server is restarting on ${newUrl}. This page couldn’t reconnect ` +
+          `automatically` + (ctls ? ' — your browser will warn about the self-signed certificate; accept it to continue.' : '.')));
+        out.append(el('div', { style: 'margin-top:.3rem' }, el('a', { href: newUrl }, `Open ${newUrl}`)));
+      };
+      // A scheme change (http↔https) can't be probed from this origin, and a
+      // fresh self-signed cert needs the user to accept it — so hand off to a
+      // manual link instead of polling.
+      if (location.protocol !== sc + ':') { manual(); return; }
+      out.append(msg('warn', `Server restarting on ${sc}://${cb}:${cp} — reconnecting…`));
       let tries = 0;
       const poll = async () => {
         tries += 1;
@@ -802,10 +828,7 @@ async function viewServer() {
           if (res.ok) { location.reload(); return; }
         } catch (_) { /* still restarting */ }
         if (tries < 25) { setTimeout(poll, 600); return; }
-        out.innerHTML = '';
-        const host = (cb === '0.0.0.0' || cb === '::') ? location.hostname : cb;
-        out.append(msg('warn', `The server is now on ${cb}:${cp}. This page couldn’t reconnect ` +
-          `automatically — open http://${host}:${cp}/`));
+        manual();
       };
       setTimeout(poll, 1200);
     } catch (ex) { out.append(msg('err', ex.message)); }
@@ -820,9 +843,10 @@ async function viewServer() {
       const r = await api('PUT', '/settings', {
         bind: bindInput.value.trim(),
         port: Number(f.querySelector('input[name="port"]').value),
+        tls: tlsInput.checked,
       });
       out.append(r.restart_required
-        ? msg('warn', `Saved. Restart the daemon to start listening on ${r.configured.bind}:${r.configured.port}.`)
+        ? msg('warn', `Saved. Restart the daemon (or use “Restart & apply”) to start listening on ${scheme(r.configured.tls)}://${r.configured.bind}:${r.configured.port}.`)
         : msg('ok', 'Saved (unchanged from the running configuration).'));
     } catch (ex) { out.append(msg('err', ex.message)); }
   });

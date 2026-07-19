@@ -13,11 +13,14 @@
 #include <cstdlib>
 #include <string>
 
+#include <unistd.h>
+
 #include "database.hpp"
 #include "http_server.hpp"
 #include "httplib.h"
 #include "nlohmann/json.hpp"
 #include "password.hpp"
+#include "tls_cert.hpp"
 
 using json = nlohmann::json;
 using nightwatcher::ApiConfig;
@@ -267,6 +270,44 @@ int main() {
         const httplib::Headers ra = {{"Authorization", "Bearer testtoken"}};
         CHECK((rr = rc.Get("/api/v1/sensors", ra)) && rr->status == 200);  // token authorizes it
         rserver.stop();
+    }
+
+    // ---- HTTPS end to end ----
+    // Generate a self-signed cert, serve with it, and reach it over TLS.
+    {
+        const std::string cert = "nw_api_tls_cert.pem";
+        const std::string key = "nw_api_tls_key.pem";
+        ::unlink(cert.c_str());
+        ::unlink(key.c_str());
+        std::string info;
+        CHECK(nightwatcher::ensure_self_signed_cert(cert, key, "localhost", info));
+
+        ApiConfig scfg;
+        scfg.bind = "127.0.0.1";
+        scfg.port = 18101;
+        scfg.token = "testtoken";
+        scfg.tls_cert = cert;
+        scfg.tls_key = key;
+        scfg.db = db::DbConfig::from_env();
+        HttpServer sserver(scfg);
+        try {
+            sserver.start();
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "api_test: TLS server start failed: %s\n", e.what());
+            ++g_failures;
+        }
+        httplib::SSLClient sc("127.0.0.1", 18101);
+        sc.enable_server_certificate_verification(false);  // self-signed
+        sc.set_connection_timeout(2, 0);
+        httplib::Result sr;
+        for (int i = 0; i < 100; ++i) {
+            sr = sc.Get("/api/v1/version");
+            if (sr && sr->status == 200) break;
+        }
+        CHECK(sr && sr->status == 200);  // served over HTTPS
+        sserver.stop();
+        ::unlink(cert.c_str());
+        ::unlink(key.c_str());
     }
 
     server.stop();

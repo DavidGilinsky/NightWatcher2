@@ -77,6 +77,10 @@ Config Config::load(const std::string& path) {
         } else if (section == "api") {
             if (key == "port") cfg.api_port = std::stoi(value);
             else if (key == "bind") cfg.api_bind = value;
+            else if (key == "tls")
+                cfg.api_tls = (value == "on" || value == "true" || value == "1" || value == "yes");
+            else if (key == "tls_cert") cfg.api_tls_cert = value;
+            else if (key == "tls_key") cfg.api_tls_key = value;
             else if (key == "schema_file") cfg.schema_file = value;
             else if (key == "web_root") cfg.web_root = value;
         } else if (current_sensor >= 0) {
@@ -86,6 +90,15 @@ Config Config::load(const std::string& path) {
             else if (key == "name") sc.name = value;
         }
         // Unknown sections/keys are ignored for forward compatibility.
+    }
+
+    // Default the TLS material to a tls/ dir beside the config file, so enabling
+    // HTTPS from the UI has somewhere to auto-generate a self-signed cert.
+    if (cfg.api_tls_cert.empty() || cfg.api_tls_key.empty()) {
+        const auto slash = path.find_last_of('/');
+        const std::string dir = (slash == std::string::npos) ? "." : path.substr(0, slash);
+        if (cfg.api_tls_cert.empty()) cfg.api_tls_cert = dir + "/tls/nightwatcher-cert.pem";
+        if (cfg.api_tls_key.empty()) cfg.api_tls_key = dir + "/tls/nightwatcher-key.pem";
     }
 
     return cfg;

@@ -39,6 +39,7 @@ int main() {
             << "\n"
             << "[api]\n"
             << "port = 9090\n"
+            << "tls = on\n"
             << "\n"
             << "[sensor:DSN003]\n"
             << "transport = tcp\n"
@@ -58,6 +59,10 @@ int main() {
     CHECK(cfg.db_name == "nw");
     CHECK(cfg.db_user == "nwuser");
     CHECK(cfg.api_port == 9090);
+    CHECK(cfg.api_tls == true);
+    // With no explicit paths, the cert/key default to a tls/ dir beside the config.
+    CHECK(cfg.api_tls_cert == "./tls/nightwatcher-cert.pem");
+    CHECK(cfg.api_tls_key == "./tls/nightwatcher-key.pem");
     CHECK(cfg.sensors.size() == 2);
     if (cfg.sensors.size() == 2) {
         CHECK(cfg.sensors[0].id == "DSN003");

@@ -31,10 +31,19 @@ user = nightwatcher
 # Built-in HTTP server (REST API + web UI).
 port = 8080
 bind = 127.0.0.1
+# Serve over HTTPS (TLS). When on and no cert exists yet, a self-signed
+# certificate + key are generated automatically at the paths below (browsers
+# will show a one-time warning you can accept). Provide tls_cert/tls_key to use
+# your own certificate instead. bind/port/tls are also editable from the web
+# UI's Server tab, which overrides these values.
+tls = off
+# tls_cert = /etc/nightwatcher/tls/nightwatcher-cert.pem
+# tls_key  = /etc/nightwatcher/tls/nightwatcher-key.pem
 # Path to schema.sql, used by POST /api/v1/db/init to create any missing tables.
 schema_file = /usr/share/nightwatcher/schema.sql
 # Static web UI directory, served at /.
 web_root = /usr/share/nightwatcher/web
 # Writes require an admin login session (an 'admin'/'admin' account is seeded on first
 # start; change the password). An optional static token for scripts may be set via
-# NW_API_TOKEN (never stored here).
+# NW_API_TOKEN (never stored here). Bound off localhost, ALL requests (reads
+# included) require that login or token.

@@ -38,6 +38,9 @@ struct Config {
     int db_port = 3306;
     int api_port = 8080;
     std::string api_bind = "127.0.0.1";
+    bool api_tls = false;         // serve the API/UI over HTTPS (TLS)
+    std::string api_tls_cert;     // PEM certificate path (default: <config dir>/tls/...)
+    std::string api_tls_key;      // PEM private-key path (default: <config dir>/tls/...)
     std::string schema_file;  // path to schema.sql (for the API's db/init)
     std::string web_root;     // static web UI directory (optional)
     std::vector<SensorConfig> sensors;

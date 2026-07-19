@@ -124,9 +124,9 @@ if(NW_WITH_DB)
     target_link_libraries(nwdb PRIVATE nw_db nw_sqm)
 
     # ---- HTTP/JSON API (embedded in the daemon; cpp-httplib + nlohmann/json) ----
-    add_library(nw_api STATIC src/api/http_server.cpp)
+    add_library(nw_api STATIC src/api/http_server.cpp src/api/tls_cert.cpp)
     target_include_directories(nw_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/api)
-    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth nw_weather nw_export nw_httplib Threads::Threads)
+    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth nw_weather nw_export nw_httplib OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 
     # The daemon records to the database and serves the API, so it needs the DB layer.
     add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)
@@ -170,6 +170,10 @@ if(NW_BUILD_TESTS)
         add_executable(api_test tests/api_test.cpp)
         target_link_libraries(api_test PRIVATE nw_api)
         add_test(NAME api_test COMMAND api_test)
+
+        add_executable(tls_cert_test tests/tls_cert_test.cpp)
+        target_link_libraries(tls_cert_test PRIVATE nw_api OpenSSL::Crypto)
+        add_test(NAME tls_cert_test COMMAND tls_cert_test)
 
         add_executable(weather_test tests/weather_test.cpp)
         target_link_libraries(weather_test PRIVATE nw_weather)
