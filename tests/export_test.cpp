@@ -40,7 +40,10 @@ static std::vector<std::string> split_lines(const std::string& s) {
     std::vector<std::string> out;
     std::istringstream in(s);
     std::string line;
-    while (std::getline(in, line)) out.push_back(line);
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();  // CRLF -> strip CR
+        out.push_back(line);
+    }
     return out;
 }
 
@@ -56,9 +59,9 @@ static ex::ExportContext make_ctx() {
     s.model = "SQM-LE";
     s.serial_number = "00007141";
     s.feature_ver = 44;
-    s.latitude = 32.2500;
-    s.longitude = -110.9000;
-    s.elevation_m = 750.0;
+    s.latitude = 32.3030;
+    s.longitude = -110.9860;
+    s.elevation_m = 639.0;
     s.timezone = "America/Phoenix";  // fixed UTC-7, no DST
 
     ex::ExportContext ctx;
@@ -84,9 +87,10 @@ int main() {
     const std::string dat = ex::format_dsn_dat(ctx, "{}");
     const auto lines = split_lines(dat);
 
-    // --- Header structure ---
+    // --- Header structure (Community Standard Skyglow Data Format, 35 lines) ---
     CHECK(!lines.empty());
-    CHECK(lines.front() == "# Light Pollution Monitoring Data Format 1.0");
+    CHECK(lines.front() == "# Community Standard Skyglow Data Format 1.0");
+    CHECK(dat.find("\r\n") != std::string::npos);  // CRLF terminators
 
     int header_lines = 0;
     int declared = -1;
@@ -100,13 +104,13 @@ int main() {
         }
     }
     CHECK(saw_end);
-    // The self-referential count must equal the actual number of header lines.
-    CHECK(declared == header_lines);
+    CHECK(header_lines == 35);
+    CHECK(declared == 35);
 
-    CHECK(contains(dat, "# Instrument ID: DSN036"));
-    CHECK(contains(dat, "# Position (lat, lon, elev(m)): 32.250000, -110.900000, 750.0"));
+    CHECK(contains(dat, "# Position (lat, lon, elev(m)): +32.3030, -110.9860, +639"));
     CHECK(contains(dat, "# Local timezone: America/Phoenix"));
-    CHECK(contains(dat, "# SQM serial number: 00007141"));
+    CHECK(contains(dat, "# SQM serial number: 7141"));  // leading zeros stripped
+    CHECK(contains(dat, "# Number of fields per line: 6"));
 
     // --- Data rows ---
     std::vector<std::string> data;
@@ -114,7 +118,7 @@ int main() {
         if (!l.empty() && l[0] != '#') data.push_back(l);
     CHECK(data.size() == 2);
 
-    // First data row: 6 semicolon-separated fields.
+    // First data row: 6 semicolon-separated fields; Counts+Frequency empty.
     std::vector<std::string> f;
     {
         std::istringstream in(data.at(0));
@@ -126,14 +130,23 @@ int main() {
         CHECK(f[0] == "2026-07-19T04:00:00.000");        // UTC column
         CHECK(f[1] == "2026-07-18T21:00:00.000");        // local = UTC-7 (Phoenix)
         CHECK(f[2] == "15.5");                            // temperature
-        CHECK(f[3] == "456");                            // counts
-        CHECK(f[4] == "123");                            // frequency
+        CHECK(f[3].empty());                             // counts blank by default
+        CHECK(f[4].empty());                             // frequency blank by default
         CHECK(f[5] == "20.13");                          // MSAS
     }
+    // Second row's MSAS strips the trailing zero (20.20 -> "20.2").
+    CHECK(contains(data.at(1), ";20.2"));
 
-    // --- File name ---
-    CHECK(ex::dsn_file_name(ctx, R"({"site_id":"DSN036-S"})") == "DSN036-S_20260719.dat");
-    CHECK(ex::dsn_file_name(ctx, "{}") == "DSN036_20260719.dat");
+    // Opt-in Counts+Frequency populate from the device values.
+    {
+        const std::string dat_cf = ex::format_dsn_dat(ctx, R"({"include_counts_freq":true})");
+        CHECK(contains(dat_cf, ";15.5;456;123;20.13"));
+    }
+
+    // --- File name (site[_supplier]_<local YY-MM>.dat) ---
+    CHECK(ex::dsn_file_name(ctx, R"({"site_id":"DSN036-S","supplier":"Gilinsky"})") ==
+          "DSN036-S_Gilinsky_26-07.dat");
+    CHECK(ex::dsn_file_name(ctx, "{}") == "DSN036_26-07.dat");
 
     // --- Factory ---
     bool threw = false;
@@ -151,7 +164,7 @@ int main() {
         auto exp = ex::make_exporter("dsn", cfg);
         const ex::ExportResult res = exp->run(ctx);
         CHECK(res.row_count == 2);
-        CHECK(res.file_name == "DSN036-S_20260719.dat");
+        CHECK(res.file_name == "DSN036-S_26-07.dat");
         CHECK(res.remote_id.rfind("file://", 0) == 0);
         const std::string path = std::string(dir) + "/" + res.file_name;
         std::ifstream f2(path, std::ios::binary);
@@ -159,7 +172,7 @@ int main() {
         std::stringstream ss;
         ss << f2.rdbuf();
         const std::string written = ss.str();
-        CHECK(written.rfind("# Light Pollution Monitoring Data Format 1.0", 0) == 0);
+        CHECK(written.rfind("# Community Standard Skyglow Data Format 1.0", 0) == 0);
         f2.close();
         std::remove(path.c_str());
         rmdir(dir);
