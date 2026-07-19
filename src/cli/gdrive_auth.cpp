@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const std::string scope = "https://www.googleapis.com/auth/drive.file";
+    const std::string scope = "https://www.googleapis.com/auth/drive";
     std::cout << "\n1) Open this URL in a browser on ANY device and approve access:\n\n"
               << ex::oauth_consent_url(client_id, redirect, scope) << "\n\n"
               << "2) Your browser will land on a " << redirect

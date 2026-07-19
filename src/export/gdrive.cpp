@@ -135,7 +135,7 @@ std::string DriveClient::access_token() {
         const long now = static_cast<long>(std::time(nullptr));
         const std::string jwt =
             make_service_account_jwt(auth_.client_email, auth_.private_key,
-                                     "https://www.googleapis.com/auth/drive.file", auth_.token_uri,
+                                     "https://www.googleapis.com/auth/drive", auth_.token_uri,
                                      now, now + 3600);
         const std::string body =
             "grant_type=" + url_encode("urn:ietf:params:oauth:grant-type:jwt-bearer") +
@@ -171,7 +171,8 @@ std::string DriveClient::upload_or_update(const std::string& folder_id, const st
     const std::string q =
         "name = '" + name + "' and '" + folder_id + "' in parents and trashed = false";
     const std::string find = "/drive/v3/files?q=" + url_encode(q) +
-                             "&fields=" + url_encode("files(id,name)") + "&spaces=drive";
+                             "&fields=" + url_encode("files(id,name)") + "&spaces=drive" +
+                             "&supportsAllDrives=true&includeItemsFromAllDrives=true";
     auto sres = api.Get(find.c_str(), auth_hdr);
     check(sres, "drive file search");
     const json sj = json::parse(sres->body);
@@ -181,7 +182,8 @@ std::string DriveClient::upload_or_update(const std::string& folder_id, const st
 
     if (!existing.empty()) {
         // Update the content of the existing file (media upload).
-        const std::string up = "/upload/drive/v3/files/" + existing + "?uploadType=media";
+        const std::string up =
+            "/upload/drive/v3/files/" + existing + "?uploadType=media&supportsAllDrives=true";
         auto ures = api.Patch(up.c_str(), auth_hdr, content, mime.c_str());
         check(ures, "drive file update");
         return existing;
@@ -199,7 +201,8 @@ std::string DriveClient::upload_or_update(const std::string& folder_id, const st
     body += content + "\r\n";
     body += "--" + boundary + "--";
     const std::string ct = "multipart/related; boundary=" + boundary;
-    auto cres = api.Post("/upload/drive/v3/files?uploadType=multipart", auth_hdr, body, ct.c_str());
+    auto cres = api.Post("/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true", auth_hdr,
+                         body, ct.c_str());
     check(cres, "drive file create");
     const json cj = json::parse(cres->body);
     return cj.value("id", std::string());
