@@ -108,9 +108,14 @@ if(NW_WITH_DB)
     # ---- Data-export module (DSN / Globe at Night; modular, like weather) ----
     add_library(nw_export STATIC
         src/export/exporter.cpp
-        src/export/dsn_format.cpp)
+        src/export/dsn_format.cpp
+        src/export/gdrive.cpp)
     target_include_directories(nw_export PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
     target_link_libraries(nw_export PUBLIC nw_db nw_core nw_httplib)
+
+    # ---- One-time headless OAuth helper for Google Drive ----
+    add_executable(nwexport-auth src/cli/gdrive_auth.cpp)
+    target_link_libraries(nwexport-auth PRIVATE nw_export)
 
     add_executable(nwdb src/cli/nwdb.cpp)
     target_link_libraries(nwdb PRIVATE nw_db nw_sqm)
@@ -129,7 +134,7 @@ endif()
 include(GNUInstallDirs)
 install(TARGETS sqmctl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 if(NW_WITH_DB)
-    install(TARGETS nightwatcherd nwdb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS nightwatcherd nwdb nwexport-auth RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(FILES config/nightwatcher.conf.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
@@ -170,6 +175,10 @@ if(NW_BUILD_TESTS)
         add_executable(export_test tests/export_test.cpp)
         target_link_libraries(export_test PRIVATE nw_export)
         add_test(NAME export_test COMMAND export_test)
+
+        add_executable(gdrive_test tests/gdrive_test.cpp)
+        target_link_libraries(gdrive_test PRIVATE nw_export OpenSSL::Crypto)
+        add_test(NAME gdrive_test COMMAND gdrive_test)
     endif()
 
     # Software SQM simulator (TCP) for local end-to-end testing without hardware.

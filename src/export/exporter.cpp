@@ -14,6 +14,7 @@
 #include <string>
 
 #include "exporter.hpp"
+#include "gdrive.hpp"
 #include "nlohmann/json.hpp"
 
 using json = nlohmann::json;
@@ -47,10 +48,11 @@ public:
             return r;
         }
 
-        if (!cfg.value("drive_folder_id", std::string()).empty()) {
-            // Stage B: Google Drive upload via OAuth2 refresh-token client.
-            throw std::runtime_error(
-                "Google Drive upload is not configured yet; run the one-time auth step");
+        const std::string folder = cfg.value("drive_folder_id", std::string());
+        if (!folder.empty()) {
+            DriveClient drive(drive_auth_from_config(config_));
+            r.remote_id = drive.upload_or_update(folder, r.file_name, content, "text/plain");
+            return r;
         }
 
         throw std::runtime_error("dsn export has no destination: set drive_folder_id or outbox_dir");
