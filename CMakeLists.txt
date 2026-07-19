@@ -126,7 +126,7 @@ if(NW_WITH_DB)
     # ---- HTTP/JSON API (embedded in the daemon; cpp-httplib + nlohmann/json) ----
     add_library(nw_api STATIC src/api/http_server.cpp)
     target_include_directories(nw_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/api)
-    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth nw_weather nw_httplib Threads::Threads)
+    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth nw_weather nw_export nw_httplib Threads::Threads)
 
     # The daemon records to the database and serves the API, so it needs the DB layer.
     add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)

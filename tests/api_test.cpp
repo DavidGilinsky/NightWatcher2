@@ -103,6 +103,54 @@ int main() {
     r = cli.Patch("/api/v1/sensors/APITEST", auth, R"({"elevation_m":1234})", "application/json");
     CHECK(r && r->status == 200);
 
+    // ---- export targets (nested-secret masking + run/log) ----
+    {
+        const char* exbody =
+            R"({"id":"APIEXP","sensor_id":"APITEST","target":"dsn","schedule":"manual",)"
+            R"("config":{"site_id":"DSN036-S","supplier":"Api","auth":{"mode":"oauth",)"
+            R"("client_id":"cid","client_secret":"SECRET","refresh_token":"REFRESH"}}})";
+        r = cli.Post("/api/v1/export-targets", auth, exbody, "application/json");
+        CHECK(r && r->status == 201);
+
+        r = cli.Get("/api/v1/export-targets/APIEXP");
+        CHECK(r && r->status == 200);
+        if (r && r->status == 200) {
+            const json j = json::parse(r->body);
+            CHECK(j["target"] == "dsn");
+            CHECK(j["sensor_id"] == "APITEST");
+            CHECK(j["config"]["auth"]["refresh_token"] == "***");   // nested secret masked
+            CHECK(j["config"]["auth"]["client_secret"] == "***");
+            CHECK(j["config"]["auth"]["client_id"] == "cid");       // non-secret visible
+            CHECK(j["config"]["site_id"] == "DSN036-S");
+        }
+
+        // PATCH a non-secret field leaving the masked secret in place -> secret preserved.
+        r = cli.Patch("/api/v1/export-targets/APIEXP", auth,
+                      R"({"config":{"supplier":"Api2","auth":{"refresh_token":"***"}}})",
+                      "application/json");
+        CHECK(r && r->status == 200);
+        {
+            db::Database d(cfg.db);
+            const auto t = d.find_export_target("APIEXP");
+            CHECK(t.has_value());
+            if (t) {
+                const json cf = json::parse(t->config);
+                CHECK(cf["auth"]["refresh_token"] == "REFRESH");  // preserved through the edit
+                CHECK(cf["supplier"] == "Api2");                  // updated
+            }
+        }
+
+        r = cli.Get("/api/v1/export-targets/APIEXP/log", auth);
+        CHECK(r && r->status == 200);
+        // run-now with no readings for this sensor exports nothing (no network).
+        r = cli.Post("/api/v1/export-targets/APIEXP/run", auth, "", "application/json");
+        CHECK(r && r->status == 200);
+        if (r && r->status == 200) CHECK(json::parse(r->body)["files"] == 0);
+
+        r = cli.Delete("/api/v1/export-targets/APIEXP", auth);
+        CHECK(r && r->status == 200);
+    }
+
     // Delete, then confirm gone.
     r = cli.Delete("/api/v1/sensors/APITEST", auth);
     CHECK(r && r->status == 200);

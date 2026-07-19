@@ -21,6 +21,7 @@
 #include <utility>
 
 #include "discovery.hpp"
+#include "export_runner.hpp"
 #include "httplib.h"
 #include "logging.hpp"
 #include "nightwatcher/version.hpp"
@@ -90,19 +91,52 @@ bool is_secret_key(const std::string& k) {
            lk.find("password") != std::string::npos || lk.find("token") != std::string::npos;
 }
 
+// Recursively redact secret string values (matched by key name), descending into
+// nested objects (e.g. an export target's config.auth.private_key).
+json mask_config_json(const json& c) {
+    if (!c.is_object()) return c;
+    json out = json::object();
+    for (auto& item : c.items()) {
+        if (item.value().is_object()) {
+            out[item.key()] = mask_config_json(item.value());
+        } else if (is_secret_key(item.key()) && item.value().is_string() &&
+                   !item.value().get<std::string>().empty()) {
+            out[item.key()] = "***";
+        } else {
+            out[item.key()] = item.value();
+        }
+    }
+    return out;
+}
+
 // Config with secret values redacted, for serving to clients.
 json mask_config(const std::string& config_json) {
     if (config_json.empty()) return json::object();
     json c;
     try { c = json::parse(config_json); } catch (...) { return json::object(); }
     if (!c.is_object()) return json::object();
-    for (auto& item : c.items()) {
-        if (is_secret_key(item.key()) && item.value().is_string() &&
-            !item.value().get<std::string>().empty()) {
-            item.value() = "***";
+    return mask_config_json(c);
+}
+
+// Recursively merge incoming into existing, ignoring blank/masked ("***") secret
+// values so secrets survive edits, and descending into nested objects.
+json merge_config_json(json existing, const json& incoming) {
+    if (!existing.is_object()) existing = json::object();
+    if (!incoming.is_object()) return existing;
+    for (const auto& item : incoming.items()) {
+        const std::string& k = item.key();
+        const json& v = item.value();
+        if (v.is_object()) {
+            existing[k] = merge_config_json(existing.contains(k) ? existing[k] : json::object(), v);
+        } else if (is_secret_key(k) && v.is_string()) {
+            const std::string s = v.get<std::string>();
+            if (s.empty() || s == "***") continue;  // keep the existing secret
+            existing[k] = v;
+        } else {
+            existing[k] = v;
         }
     }
-    return c;
+    return existing;
 }
 
 // Merge incoming config into existing, ignoring blank/masked secret values so
@@ -112,16 +146,7 @@ std::string merge_config(const std::string& existing_json, const json& incoming)
     try { c = existing_json.empty() ? json::object() : json::parse(existing_json); }
     catch (...) { c = json::object(); }
     if (!c.is_object()) c = json::object();
-    if (incoming.is_object()) {
-        for (const auto& item : incoming.items()) {
-            if (is_secret_key(item.key()) && item.value().is_string()) {
-                const std::string v = item.value().get<std::string>();
-                if (v.empty() || v == "***") continue;
-            }
-            c[item.key()] = item.value();
-        }
-    }
-    return c.dump();
+    return merge_config_json(c, incoming).dump();
 }
 
 json to_json(const db::WeatherStationRow& w) {
@@ -162,6 +187,26 @@ json to_json(const db::EventRow& e) {
     return json{{"id", e.id},       {"ts_utc", e.ts_utc}, {"device_id", e.device_id},
                 {"source", e.source}, {"level", e.level},  {"event", e.event},
                 {"detail", e.detail}};
+}
+json to_json(const db::ExportTargetRow& t) {
+    return json{{"id", t.id},
+                {"sensor_id", t.sensor_id},
+                {"name", t.name},
+                {"target", t.target},
+                {"config", mask_config(t.config)},
+                {"schedule", t.schedule},
+                {"schedule_time", t.schedule_time},
+                {"interval_s", j_opt(t.interval_s)},
+                {"last_export_ts", t.last_export_ts},
+                {"status", t.status},
+                {"notes", t.notes},
+                {"created_at", t.created_at}};
+}
+json to_json(const db::ExportLogRow& l) {
+    return json{{"id", l.id},          {"target_id", l.target_id}, {"ts_utc", l.ts_utc},
+                {"from_ts", l.from_ts}, {"to_ts", l.to_ts},         {"row_count", l.row_count},
+                {"file_name", l.file_name}, {"remote_id", l.remote_id}, {"status", l.status},
+                {"detail", l.detail}};
 }
 
 // ---- request-body parsing --------------------------------------------------
@@ -204,6 +249,20 @@ db::WeatherStationFields wx_fields_from_json(const json& b) {
     d("latitude", f.latitude); d("longitude", f.longitude); d("elevation_m", f.elevation_m);
     s("timezone", f.timezone); i("poll_interval_s", f.poll_interval_s);
     s("status", f.status); s("installed_at", f.installed_at); s("notes", f.notes);
+    return f;
+}
+
+db::ExportTargetFields export_fields_from_json(const json& b) {
+    db::ExportTargetFields f;
+    const auto s = [&](const char* k, std::optional<std::string>& o) {
+        if (b.contains(k) && !b[k].is_null()) o = b[k].get<std::string>();
+    };
+    const auto i = [&](const char* k, std::optional<int>& o) {
+        if (b.contains(k) && !b[k].is_null()) o = b[k].get<int>();
+    };
+    s("sensor_id", f.sensor_id); s("name", f.name); s("target", f.target);
+    s("schedule", f.schedule); s("schedule_time", f.schedule_time);
+    i("interval_s", f.interval_s); s("status", f.status); s("notes", f.notes);
     return f;
 }
 
@@ -558,6 +617,95 @@ void HttpServer::start() {
                      send(res, 200, j);
                  } catch (const std::exception& e) { send_err(res, 502, e.what()); }
              });
+    // ---- export targets (DSN / Globe at Night) ----
+    srv.Get("/api/v1/export-targets", [dbc](const httplib::Request&, httplib::Response& res) {
+        try {
+            db::Database db(dbc);
+            json arr = json::array();
+            for (const auto& t : db.export_targets()) arr.push_back(to_json(t));
+            send(res, 200, arr);
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Get(R"(/api/v1/export-targets/([^/]+)/log)",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                const int limit = req.has_param("limit") ? std::atoi(req.get_param_value("limit").c_str()) : 50;
+                try {
+                    db::Database db(dbc);
+                    json arr = json::array();
+                    for (const auto& l : db.export_log(req.matches[1], limit)) arr.push_back(to_json(l));
+                    send(res, 200, arr);
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
+    srv.Get(R"(/api/v1/export-targets/([^/]+))",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                try {
+                    db::Database db(dbc);
+                    const auto t = db.find_export_target(req.matches[1]);
+                    if (!t) { send_err(res, 404, "no such export target"); return; }
+                    send(res, 200, to_json(*t));
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
+    srv.Post("/api/v1/export-targets", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+        if (!require_auth(req, res, token, dbc, true)) return;
+        json body;
+        try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+        if (!body.contains("id")) { send_err(res, 400, "missing 'id'"); return; }
+        try {
+            db::Database db(dbc);
+            const std::string id = body["id"].get<std::string>();
+            db::ExportTargetFields f = export_fields_from_json(body);
+            if (!f.sensor_id) { send_err(res, 400, "missing 'sensor_id'"); return; }
+            if (!f.target) { send_err(res, 400, "missing 'target'"); return; }
+            if (body.contains("config") && body["config"].is_object()) f.config = body["config"].dump();
+            db.upsert_export_target(id, f);
+            const auto t = db.find_export_target(id);
+            send(res, 201, t ? to_json(*t) : json{{"id", id}});
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Patch(R"(/api/v1/export-targets/([^/]+))",
+              [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                  if (!require_auth(req, res, token, dbc, true)) return;
+                  json body;
+                  try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+                  try {
+                      db::Database db(dbc);
+                      db::ExportTargetFields f = export_fields_from_json(body);
+                      if (body.contains("config")) {
+                          const auto existing = db.find_export_target(req.matches[1]);
+                          if (!existing) { send_err(res, 404, "no such export target"); return; }
+                          f.config = merge_config(existing->config, body["config"]);
+                      }
+                      if (!db.update_export_target(req.matches[1], f)) {
+                          send_err(res, 404, "no such export target");
+                          return;
+                      }
+                      const auto t = db.find_export_target(req.matches[1]);
+                      send(res, 200, t ? to_json(*t) : json::object());
+                  } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+              });
+    srv.Delete(R"(/api/v1/export-targets/([^/]+))",
+               [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                   if (!require_auth(req, res, token, dbc, true)) return;
+                   try {
+                       db::Database db(dbc);
+                       db.remove_export_target(req.matches[1]);
+                       send(res, 200, json{{"deleted", std::string(req.matches[1])}});
+                   } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+               });
+    srv.Post(R"(/api/v1/export-targets/([^/]+)/run)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 try {
+                     db::Database db(dbc);
+                     const auto t = db.find_export_target(req.matches[1]);
+                     if (!t) { send_err(res, 404, "no such export target"); return; }
+                     const auto r = exporter::run_export(db, *t);
+                     send(res, 200,
+                          json{{"files", r.files}, {"rows", r.rows}, {"last_ts", r.last_ts},
+                               {"file_names", r.file_names}});
+                 } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+             });
+
     srv.Post("/api/v1/db/init", [dbc, token, schema_file](const httplib::Request& req, httplib::Response& res) {
         if (!require_auth(req, res, token, dbc, true)) return;
         if (schema_file.empty()) { send_err(res, 503, "schema_file not configured"); return; }
