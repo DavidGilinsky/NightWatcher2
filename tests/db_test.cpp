@@ -264,12 +264,16 @@ int main() {
             dbh.run_schema_script("DROP TABLE IF EXISTS nwtest_backup;");
         }
 
-        // Settings key/value round-trip (upsert overwrites; missing -> nullopt).
-        dbh.set_setting("api_bind", "0.0.0.0");
-        CHECK(dbh.get_setting("api_bind").value_or("") == "0.0.0.0");
-        dbh.set_setting("api_bind", "127.0.0.1");
-        CHECK(dbh.get_setting("api_bind").value_or("") == "127.0.0.1");
+        // Settings key/value round-trip (upsert overwrites; missing -> nullopt;
+        // delete removes). Uses a throwaway key so a live daemon's real
+        // settings (api_bind/api_port/api_tls) are never disturbed.
+        dbh.set_setting("nwtest_setting", "0.0.0.0");
+        CHECK(dbh.get_setting("nwtest_setting").value_or("") == "0.0.0.0");
+        dbh.set_setting("nwtest_setting", "127.0.0.1");
+        CHECK(dbh.get_setting("nwtest_setting").value_or("") == "127.0.0.1");
         CHECK(!dbh.get_setting("nwtest_missing_setting").has_value());
+        dbh.delete_setting("nwtest_setting");
+        CHECK(!dbh.get_setting("nwtest_setting").has_value());
 
         // Schema status reports the eleven known tables, sensors present.
         const auto st = dbh.schema_status();

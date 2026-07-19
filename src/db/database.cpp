@@ -820,6 +820,10 @@ void Database::set_setting(const std::string& name, const std::string& value) {
     exec(q.str());
 }
 
+void Database::delete_setting(const std::string& name) {
+    exec("DELETE FROM settings WHERE name = '" + esc(name) + "'");
+}
+
 std::vector<TableCount> Database::schema_status() {
     std::set<std::string> present;
     exec("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()");

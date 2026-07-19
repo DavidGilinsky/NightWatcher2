@@ -17,6 +17,7 @@
 
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "tls_cert.hpp"
 
@@ -53,6 +54,10 @@ int main() {
             char cn[128] = {0};
             X509_NAME_get_text_by_NID(X509_get_subject_name(x), NID_commonName, cn, sizeof(cn));
             CHECK(std::string(cn) == "nwhost");
+            // SANs must cover loopback + the CN so browsers validate those hosts.
+            CHECK(X509_check_ip_asc(x, "127.0.0.1", 0) == 1);
+            CHECK(X509_check_host(x, "localhost", 0, 0, nullptr) == 1);
+            CHECK(X509_check_host(x, "nwhost", 0, 0, nullptr) == 1);
             X509_free(x);
         }
     } else {

@@ -306,6 +306,7 @@ public:
     // --- Runtime settings (key/value; e.g. api_bind, api_port) ---
     std::optional<std::string> get_setting(const std::string& name);
     void set_setting(const std::string& name, const std::string& value);
+    void delete_setting(const std::string& name);
 
     // --- Schema ---
     std::vector<TableCount> schema_status();          // known tables + row counts

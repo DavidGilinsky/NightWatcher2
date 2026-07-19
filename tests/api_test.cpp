@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 
 #include <unistd.h>
@@ -203,6 +204,17 @@ int main() {
     r = cli.Delete("/api/v1/sensors/APITEST2", sauth);
     CHECK(r && r->status == 200);
 
+    // Snapshot the settings this test mutates so we can restore them exactly.
+    // The DB may be shared with a live daemon; clobbering api_bind/api_port/
+    // api_tls would silently change where it listens.
+    std::optional<std::string> save_bind, save_port, save_tls;
+    {
+        db::Database d(cfg.db);
+        save_bind = d.get_setting("api_bind");
+        save_port = d.get_setting("api_port");
+        save_tls = d.get_setting("api_tls");
+    }
+
     // Server settings: GET is admin-only; PUT validates and persists.
     CHECK((r = cli.Get("/api/v1/settings")) && r->status == 401);  // no auth
     r = cli.Get("/api/v1/settings", sauth);
@@ -228,6 +240,18 @@ int main() {
     r = cli.Post("/api/v1/settings/apply", sauth, "", "application/json");
     CHECK(r && r->status == 200);
     if (r && r->status == 200) CHECK(json::parse(r->body)["applying"] == false);
+
+    // Restore the settings snapshot (set back if present, delete if it wasn't).
+    {
+        db::Database d(cfg.db);
+        const auto restore = [&d](const char* k, const std::optional<std::string>& v) {
+            if (v) d.set_setting(k, *v);
+            else d.delete_setting(k);
+        };
+        restore("api_bind", save_bind);
+        restore("api_port", save_port);
+        restore("api_tls", save_tls);
+    }
 
     // Logout invalidates the session.
     r = cli.Post("/api/v1/logout", sauth, "", "application/json");

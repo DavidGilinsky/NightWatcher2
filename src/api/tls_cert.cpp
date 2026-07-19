@@ -11,12 +11,19 @@
 // ---------------------------------------------------------------------------
 #include "tls_cert.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
+#include <vector>
 
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -45,6 +52,50 @@ void ensure_parent_dir(const std::string& file_path) {
         if (next == std::string::npos) break;
         pos = next + 1;
     }
+}
+
+// Build the Subject Alternative Name list so the cert is valid for every
+// address a client might use: loopback, the CN, this host's names, and all of
+// its non-loopback interface IPs (so https://<lan-ip>:port works in a browser).
+std::string build_san_list(const std::string& cn) {
+    std::vector<std::string> entries;
+    const auto add = [&entries](const std::string& e) {
+        if (std::find(entries.begin(), entries.end(), e) == entries.end()) entries.push_back(e);
+    };
+
+    add("DNS:localhost");
+    add("IP:127.0.0.1");
+    add("IP:0:0:0:0:0:0:0:1");  // ::1
+    if (!cn.empty() && cn != "localhost") add("DNS:" + cn);
+
+    char hn[256] = {0};
+    if (gethostname(hn, sizeof(hn) - 1) == 0 && hn[0]) add(std::string("DNS:") + hn);
+
+    struct ifaddrs* ifaddr = nullptr;
+    if (getifaddrs(&ifaddr) == 0) {
+        for (struct ifaddrs* p = ifaddr; p; p = p->ifa_next) {
+            if (!p->ifa_addr) continue;
+            if (!(p->ifa_flags & IFF_UP)) continue;       // skip down interfaces
+            if (p->ifa_flags & IFF_LOOPBACK) continue;    // loopback already covered
+            char buf[INET6_ADDRSTRLEN] = {0};
+            if (p->ifa_addr->sa_family == AF_INET) {
+                auto* sin = reinterpret_cast<struct sockaddr_in*>(p->ifa_addr);
+                if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) add(std::string("IP:") + buf);
+            } else if (p->ifa_addr->sa_family == AF_INET6) {
+                auto* sin6 = reinterpret_cast<struct sockaddr_in6*>(p->ifa_addr);
+                if (IN6_IS_ADDR_LINKLOCAL(&sin6->sin6_addr)) continue;  // fe80:: needs a scope id
+                if (inet_ntop(AF_INET6, &sin6->sin6_addr, buf, sizeof(buf))) add(std::string("IP:") + buf);
+            }
+        }
+        freeifaddrs(ifaddr);
+    }
+
+    std::string out;
+    for (size_t i = 0; i < entries.size(); ++i) {
+        if (i) out += ',';
+        out += entries[i];
+    }
+    return out;
 }
 
 std::string hex_fingerprint(X509* x509) {
@@ -103,8 +154,9 @@ bool ensure_self_signed_cert(const std::string& cert_path, const std::string& ke
                                    reinterpret_cast<const unsigned char*>(cn.c_str()), -1, -1, 0);
         X509_set_issuer_name(x509, name);  // self-signed: issuer == subject
 
-        // Subject Alternative Names so browsers can match the host we bind on.
-        const std::string san = "DNS:localhost,IP:127.0.0.1,DNS:" + cn;
+        // Subject Alternative Names so browsers can match the host we bind on,
+        // including every local interface IP (LAN access by address).
+        const std::string san = build_san_list(cn);
         if (X509_EXTENSION* ext =
                 X509V3_EXT_conf_nid(nullptr, nullptr, NID_subject_alt_name, san.c_str())) {
             X509_add_ext(x509, ext, -1);
