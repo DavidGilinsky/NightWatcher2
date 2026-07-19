@@ -134,6 +134,15 @@ int main() {
         CHECK(matched_ok);
         CHECK(matched_sat);
 
+        // Range query returns only readings inside the window.
+        const auto in_window = dbh.readings_between(kId, "2026-07-18 00:00:00", "2026-07-18 23:59:59", 100);
+        bool found_in_window = false;
+        for (const auto& rr : in_window) {
+            if (rr.ts_utc.rfind(kTs, 0) == 0) found_in_window = true;
+        }
+        CHECK(found_in_window);
+        CHECK(dbh.readings_between(kId, "2000-01-01 00:00:00", "2000-01-02 00:00:00", 100).empty());
+
         sqm::Calibration c;
         c.light_cal_offset = 19.92;
         c.dark_cal_period_s = 300.0;

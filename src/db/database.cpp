@@ -292,11 +292,20 @@ long long Database::insert_reading(const std::string& sensor_id, const sqm::Read
 }
 
 std::vector<ReadingRow> Database::readings(const std::string& sensor_id, int limit) {
+    return readings_between(sensor_id, "", "", limit);
+}
+
+std::vector<ReadingRow> Database::readings_between(const std::string& sensor_id,
+                                                   const std::string& from, const std::string& to,
+                                                   int limit) {
     if (limit < 1) limit = 1;
     std::ostringstream q;
     q << "SELECT id, sensor_id, ts_utc, mag_arcsec2, freq_hz, period_counts, period_s, "
          "temp_c, quality, source, raw_line FROM readings WHERE sensor_id='"
-      << esc(sensor_id) << "' ORDER BY ts_utc DESC, id DESC LIMIT " << limit;
+      << esc(sensor_id) << "'";
+    if (!from.empty()) q << " AND ts_utc >= '" << esc(from) << "'";
+    if (!to.empty()) q << " AND ts_utc <= '" << esc(to) << "'";
+    q << " ORDER BY ts_utc DESC, id DESC LIMIT " << limit;
     exec(q.str());
     MYSQL_RES* res = mysql_store_result(impl_->conn);
     if (res == nullptr) {

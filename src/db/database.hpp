@@ -234,6 +234,9 @@ public:
 
     // Most-recent readings for a sensor, newest first.
     std::vector<ReadingRow> readings(const std::string& sensor_id, int limit = 20);
+    // Readings within [from, to] (an empty bound is unbounded), newest first.
+    std::vector<ReadingRow> readings_between(const std::string& sensor_id, const std::string& from,
+                                             const std::string& to, int limit = 5000);
 
     // Record a calibration snapshot in config_log.
     void insert_calibration(const std::string& sensor_id, const sqm::Calibration& c,

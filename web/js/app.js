@@ -271,14 +271,40 @@ async function viewQuery() {
   frag.append(el('h2', {}, 'Query & graph'));
   const sensors = await api('GET', '/sensors');
   if (!sensors.length) { frag.append(el('p', { class: 'muted' }, 'No sensors yet.')); return frag; }
-  const sel = el('select', { style: 'max-width:280px' }, ...sensors.map(s => el('option', { value: s.id }, s.name ? `${s.name} (${s.id})` : s.id)));
-  const limit = el('input', { type: 'number', value: 200, style: 'width:110px' });
+
+  const sel = el('select', { style: 'max-width:260px' }, ...sensors.map(s => el('option', { value: s.id }, s.name ? `${s.name} (${s.id})` : s.id)));
+  const rangeSel = el('select', {},
+    el('option', { value: 'day' }, 'Last 24 hours'),
+    el('option', { value: 'week', selected: 'selected' }, 'Last 7 days'),
+    el('option', { value: 'month' }, 'Last 30 days'),
+    el('option', { value: 'year' }, 'Last year'),
+    el('option', { value: 'custom' }, 'Custom range'));
+  const fromInput = el('input', { type: 'date', style: 'width:auto' });
+  const toInput = el('input', { type: 'date', style: 'width:auto' });
+  const customWrap = el('span', { class: 'row', style: 'display:none' },
+    el('span', { class: 'muted' }, 'From'), fromInput, el('span', { class: 'muted' }, 'To'), toInput);
+
   const chart = el('div', { class: 'chart' });
+  const caption = el('div', { class: 'muted', style: 'margin:.4rem 0' });
   const tblWrap = el('div', { class: 'scroll', style: 'margin-top:1rem' });
+
+  const toUtc = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   const load = async () => {
+    let from = '', to = '';
+    const days = { day: 1, week: 7, month: 30, year: 365 };
+    if (rangeSel.value === 'custom') {
+      if (fromInput.value) from = fromInput.value + ' 00:00:00';
+      if (toInput.value) to = toInput.value + ' 23:59:59';
+    } else {
+      from = toUtc(Date.now() - days[rangeSel.value] * 86400000);
+    }
+    const p = new URLSearchParams({ limit: '50000' });
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
     try {
-      const rs = await api('GET', `/sensors/${encodeURIComponent(sel.value)}/readings?limit=${Number(limit.value) || 200}`);
-      if (!rs.length) { chart.innerHTML = ''; chart.append(el('p', { class: 'muted' }, 'No readings.')); tblWrap.innerHTML = ''; return; }
+      const rs = await api('GET', `/sensors/${encodeURIComponent(sel.value)}/readings?${p}`);
+      caption.textContent = `${rs.length} reading(s)` + (from ? `  ·  from ${from} UTC` : '') + (to ? `  to ${to} UTC` : '');
+      if (!rs.length) { chart.innerHTML = ''; chart.append(el('p', { class: 'muted' }, 'No readings in this range.')); tblWrap.innerHTML = ''; return; }
       drawGraph(chart, rs);
       const cols = [
         { label: 'Time (UTC)', render: r => r.ts_utc },
@@ -291,11 +317,19 @@ async function viewQuery() {
       tblWrap.innerHTML = ''; tblWrap.append(table(cols, rs));
     } catch (e) { chart.innerHTML = ''; chart.append(msg('err', e.message)); }
   };
+
+  rangeSel.addEventListener('change', () => {
+    customWrap.style.display = rangeSel.value === 'custom' ? '' : 'none';
+    if (rangeSel.value !== 'custom') load();
+  });
+  sel.addEventListener('change', load);
+
   frag.append(el('div', { class: 'toolbar' },
     el('span', { class: 'muted' }, 'Sensor'), sel,
-    el('span', { class: 'muted' }, 'Limit'), limit,
+    el('span', { class: 'muted' }, 'Range'), rangeSel,
+    customWrap,
     el('button', { class: 'btn', onclick: load }, 'Load')));
-  frag.append(chart, tblWrap);
+  frag.append(caption, chart, tblWrap);
   setTimeout(load, 0);
   return frag;
 }

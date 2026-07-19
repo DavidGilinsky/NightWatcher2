@@ -285,12 +285,13 @@ void HttpServer::start() {
     });
     srv.Get(R"(/api/v1/sensors/([^/]+)/readings)",
             [dbc](const httplib::Request& req, httplib::Response& res) {
-                int limit = 100;
-                if (req.has_param("limit")) limit = std::atoi(req.get_param_value("limit").c_str());
+                const int limit = req.has_param("limit") ? std::atoi(req.get_param_value("limit").c_str()) : 100;
+                const std::string from = req.has_param("from") ? req.get_param_value("from") : "";
+                const std::string to = req.has_param("to") ? req.get_param_value("to") : "";
                 try {
                     db::Database db(dbc);
                     json arr = json::array();
-                    for (const auto& r : db.readings(req.matches[1], limit)) arr.push_back(to_json(r));
+                    for (const auto& r : db.readings_between(req.matches[1], from, to, limit)) arr.push_back(to_json(r));
                     send(res, 200, arr);
                 } catch (const std::exception& e) { send_err(res, 500, e.what()); }
             });
