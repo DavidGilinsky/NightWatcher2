@@ -15,6 +15,8 @@ const state = { user: null, view: 'dashboard' };
 let main = null;
 let editingSensor = null;
 let editingWeather = null;
+let editingExport = null;
+let exportLogFor = null;
 
 // ---- tiny DOM helper -------------------------------------------------------
 function el(tag, attrs, ...kids) {
@@ -560,11 +562,177 @@ async function viewDatabase() {
   return frag;
 }
 
+const EXPORT_TARGETS = { dsn: 'Dark Sky Network' };
+
+function exportForm(x, sensors) {
+  const editing = !!x;
+  const cfg = (editing && x.config && typeof x.config === 'object') ? x.config : {};
+  const auth = (cfg.auth && typeof cfg.auth === 'object') ? cfg.auth : {};
+  const f = el('form', { class: 'form card', style: 'margin-bottom:1rem' });
+  f.append(el('h3', {}, editing ? 'Edit ' + x.id : 'Add export target'));
+  const g = el('div', { class: 'form-grid' });
+  if (!editing) g.append(field('ID *', 'id', ''));
+  const sensorSel = el('select', { name: 'sensor_id' },
+    ...sensors.map(s => el('option', { value: s.id, selected: editing && x.sensor_id === s.id ? 'selected' : null }, s.name ? `${s.name} (${s.id})` : s.id)));
+  g.append(el('label', {}, 'Sensor', sensorSel));
+  g.append(field('Name', 'name', editing ? x.name : ''));
+  const targetSel = el('select', { name: 'target' },
+    ...Object.entries(EXPORT_TARGETS).map(([v, l]) => el('option', { value: v, selected: editing && x.target === v ? 'selected' : null }, l)));
+  g.append(el('label', {}, 'Target', targetSel));
+  const schedSel = el('select', { name: 'schedule' },
+    ...['nightly', 'manual', 'interval'].map(o => el('option', { value: o, selected: editing && x.schedule === o ? 'selected' : null }, o)));
+  g.append(el('label', {}, 'Schedule', schedSel));
+  const timeField = field('Nightly time (local HH:MM)', 'schedule_time', editing ? (x.schedule_time || '06:00') : '06:00');
+  const intervalField = field('Interval (s)', 'interval_s', editing && x.interval_s ? x.interval_s : 3600, 'number', '1');
+  g.append(timeField); g.append(intervalField);
+  const statusSel = el('select', { name: 'status' },
+    ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: editing && x.status === o ? 'selected' : null }, o)));
+  g.append(el('label', {}, 'Status', statusSel));
+  f.append(g);
+  const toggleSched = () => {
+    timeField.style.display = schedSel.value === 'nightly' ? '' : 'none';
+    intervalField.style.display = schedSel.value === 'interval' ? '' : 'none';
+  };
+  schedSel.addEventListener('change', toggleSched); toggleSched();
+
+  f.append(el('h3', { style: 'margin-top:.6rem' }, 'DSN settings'));
+  const dg = el('div', { class: 'form-grid' });
+  dg.append(field('Site ID', 'cfg_site_id', cfg.site_id || ''));
+  dg.append(field('Supplier (in file name)', 'cfg_supplier', cfg.supplier || ''));
+  dg.append(field('Drive folder ID', 'cfg_drive_folder_id', cfg.drive_folder_id || ''));
+  f.append(dg);
+
+  f.append(el('h3', { style: 'margin-top:.6rem' }, 'Google Drive auth'));
+  const authModeSel = el('select', {},
+    el('option', { value: 'oauth', selected: auth.mode === 'service_account' ? null : 'selected' }, 'OAuth (refresh token)'),
+    el('option', { value: 'service_account', selected: auth.mode === 'service_account' ? 'selected' : null }, 'Service account'));
+  f.append(el('label', {}, 'Auth mode', authModeSel));
+  const authWrap = el('div', { class: 'form-grid' });
+  f.append(authWrap);
+  const renderAuth = () => {
+    authWrap.innerHTML = '';
+    if (authModeSel.value === 'service_account') {
+      authWrap.append(el('div', { class: 'muted', style: 'grid-column:1/-1;font-size:.8rem' },
+        auth.client_email ? ('Key set for ' + auth.client_email + '. Paste a new JSON key to replace it, or leave blank to keep it.') : 'Paste the service-account JSON key. Share the Drive folder with its client_email.'));
+      authWrap.append(el('label', { style: 'grid-column:1/-1' }, 'Service account JSON',
+        el('textarea', { name: 'sa_json', rows: '5', placeholder: '{ "client_email": "...", "private_key": "..." }', style: 'width:100%' })));
+    } else {
+      authWrap.append(field('Client ID', 'oauth_client_id', auth.client_id || ''));
+      authWrap.append(field('Client secret', 'oauth_client_secret', auth.client_secret || ''));
+      authWrap.append(field('Refresh token', 'oauth_refresh_token', auth.refresh_token || ''));
+      authWrap.append(el('div', { class: 'muted', style: 'grid-column:1/-1;font-size:.8rem' }, 'Run `nwexport-auth` to mint a refresh token from any browser.'));
+    }
+  };
+  authModeSel.addEventListener('change', renderAuth); renderAuth();
+
+  const err = el('div'); f.append(err);
+  f.append(el('div', { class: 'row', style: 'margin-top:.6rem' },
+    el('button', { class: 'btn', type: 'submit' }, editing ? 'Save' : 'Add'),
+    editing ? el('button', { class: 'btn ghost', type: 'button', onclick: () => { editingExport = null; renderView(); } }, 'Cancel') : null));
+
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    const fd = new FormData(f);
+    const body = {};
+    for (const [k, v] of fd.entries()) {
+      if (k.startsWith('cfg_') || k.startsWith('oauth_') || k === 'sa_json') continue;
+      if (v === '') continue;
+      body[k] = (k === 'interval_s') ? Number(v) : v;
+    }
+    const config = {};
+    if (fd.get('cfg_site_id')) config.site_id = fd.get('cfg_site_id');
+    if (fd.get('cfg_supplier')) config.supplier = fd.get('cfg_supplier');
+    if (fd.get('cfg_drive_folder_id')) config.drive_folder_id = fd.get('cfg_drive_folder_id');
+    if (authModeSel.value === 'oauth') {
+      const a = { mode: 'oauth' };
+      if (fd.get('oauth_client_id')) a.client_id = fd.get('oauth_client_id');
+      if (fd.get('oauth_client_secret')) a.client_secret = fd.get('oauth_client_secret');
+      if (fd.get('oauth_refresh_token')) a.refresh_token = fd.get('oauth_refresh_token');
+      config.auth = a;
+    } else {
+      const sj = (fd.get('sa_json') || '').trim();
+      if (sj) {
+        let sa;
+        try { sa = JSON.parse(sj); } catch (_) { err.innerHTML = ''; err.append(msg('err', 'Service account JSON is invalid')); return; }
+        config.auth = { mode: 'service_account', client_email: sa.client_email, private_key: sa.private_key, token_uri: sa.token_uri || 'https://oauth2.googleapis.com/token' };
+      }
+    }
+    body.config = config;
+    try {
+      if (editing) { delete body.id; await api('PATCH', `/export-targets/${encodeURIComponent(x.id)}`, body); }
+      else { if (!body.id) { err.innerHTML = ''; err.append(msg('err', 'ID is required')); return; } await api('POST', '/export-targets', body); }
+      editingExport = null; renderView();
+    } catch (ex) { err.innerHTML = ''; err.append(msg('err', ex.message)); }
+  });
+  return f;
+}
+
+async function viewExports() {
+  const frag = document.createDocumentFragment();
+  frag.append(el('h2', {}, 'DSN Export'));
+  const sensors = await api('GET', '/sensors');
+  if (!sensors.length) {
+    frag.append(el('p', { class: 'muted' }, 'Add a sensor first — exports are built from a sensor’s readings.'));
+    return frag;
+  }
+  if (isAdmin()) frag.append(exportForm(editingExport, sensors));
+  const rows = await api('GET', '/export-targets');
+  const cols = [
+    { label: 'ID', render: x => x.id },
+    { label: 'Sensor', render: x => x.sensor_id },
+    { label: 'Target', render: x => EXPORT_TARGETS[x.target] || x.target },
+    { label: 'Schedule', render: x => x.schedule === 'nightly' ? `nightly ${x.schedule_time || ''}` : (x.schedule === 'interval' ? `every ${x.interval_s || '?'}s` : 'manual') },
+    { label: 'Last export', render: x => x.last_export_ts || '—' },
+    { label: 'Status', render: x => el('span', { class: 'pill ' + (x.status || '') }, x.status) },
+  ];
+  if (isAdmin()) cols.push({
+    label: '', render: x => el('div', { class: 'row' },
+      el('button', {
+        class: 'btn sm', onclick: async () => {
+          try {
+            const r = await api('POST', `/export-targets/${encodeURIComponent(x.id)}/run`);
+            alert(`Exported ${r.rows} reading(s) in ${r.files} file(s)` +
+                  (r.file_names && r.file_names.length ? ':\n' + r.file_names.join('\n') : '.'));
+            renderView();
+          } catch (e) { alert('Run failed: ' + e.message); }
+        }
+      }, 'Run now'),
+      el('button', { class: 'btn ghost sm', onclick: () => { exportLogFor = (exportLogFor === x.id ? null : x.id); renderView(); } }, 'Log'),
+      el('button', { class: 'btn ghost sm', onclick: () => { editingExport = x; renderView(); } }, 'Edit'),
+      el('button', {
+        class: 'btn danger sm', onclick: async () => {
+          if (confirm('Delete export target ' + x.id + '?')) {
+            try { await api('DELETE', '/export-targets/' + encodeURIComponent(x.id)); renderView(); } catch (e) { alert(e.message); }
+          }
+        }
+      }, 'Delete'))
+  });
+  frag.append(rows.length ? el('div', { class: 'scroll' }, table(cols, rows)) : el('p', { class: 'muted' }, 'No export targets yet.'));
+
+  if (exportLogFor) {
+    frag.append(el('h3', { style: 'margin-top:1rem' }, 'Export log — ' + exportLogFor));
+    try {
+      const log = await api('GET', `/export-targets/${encodeURIComponent(exportLogFor)}/log`);
+      const lcols = [
+        { label: 'When (UTC)', render: l => l.ts_utc },
+        { label: 'Window', render: l => (l.from_ts || '') + ' → ' + (l.to_ts || '') },
+        { label: 'Rows', render: l => l.row_count },
+        { label: 'File', render: l => l.file_name || '—' },
+        { label: 'Status', render: l => el('span', { class: 'pill ' + (l.status === 'error' ? 'suspect' : (l.status === 'ok' ? 'ok' : '')) }, l.status) },
+        { label: 'Detail', render: l => l.detail || '' },
+      ];
+      frag.append(log.length ? el('div', { class: 'scroll' }, table(lcols, log)) : el('p', { class: 'muted' }, 'Nothing exported yet.'));
+    } catch (e) { frag.append(msg('err', e.message)); }
+  }
+  return frag;
+}
+
 const VIEWS = {
   dashboard: { label: 'Dashboard', render: viewDashboard },
   query: { label: 'Query & graph', render: viewQuery },
   sensors: { label: 'Sensors', render: viewSensors },
   weather: { label: 'Weather', render: viewWeather },
+  exports: { label: 'DSN Export', admin: true, render: viewExports },
   events: { label: 'Events', render: viewEvents },
   users: { label: 'Users', admin: true, render: viewUsers },
   database: { label: 'Database', admin: true, render: viewDatabase },
