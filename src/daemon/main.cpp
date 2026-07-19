@@ -28,11 +28,13 @@
 #include "nightwatcher/version.hpp"
 #include "password.hpp"
 #include "scheduler.hpp"
+#include "weather_scheduler.hpp"
 
 using nightwatcher::ApiConfig;
 using nightwatcher::Config;
 using nightwatcher::HttpServer;
 using nightwatcher::Scheduler;
+using nightwatcher::weather::WeatherScheduler;
 using nightwatcher::log_error;
 using nightwatcher::log_info;
 using nightwatcher::log_warn;
@@ -174,20 +176,25 @@ int main(int argc, char** argv) {
         reload = false;
 
         std::vector<db::SensorRow> sensors;
+        std::vector<db::WeatherStationRow> stations;
         try {
             db::Database dbh(db_cfg);
             sensors = dbh.active_sensors();
+            stations = dbh.active_weather_stations();
         } catch (const std::exception& e) {
-            log_error(std::string("cannot read sensor list: ") + e.what());
+            log_error(std::string("cannot read device list: ") + e.what());
             exit_code = 1;
             break;
         }
-        log_info("polling " + std::to_string(sensors.size()) + " active sensor(s)");
+        log_info("polling " + std::to_string(sensors.size()) + " sensor(s), " +
+                 std::to_string(stations.size()) + " weather station(s)");
 
         Scheduler sched(db_cfg);
         sched.start(sensors);
-        if (sched.worker_count() == 0) {
-            log_warn("no pollable (tcp) sensors registered; waiting for a signal");
+        WeatherScheduler wsched(db_cfg);
+        wsched.start(stations);
+        if (sched.worker_count() == 0 && wsched.worker_count() == 0) {
+            log_warn("no pollable devices registered; waiting for a signal");
         }
 
         int sig = 0;
@@ -196,16 +203,19 @@ int main(int argc, char** argv) {
             if (sig == SIGINT || sig == SIGTERM) {
                 log_info("signal " + std::to_string(sig) + " received; shutting down");
                 sched.stop();
+                wsched.stop();
                 break;
             }
             if (sig == SIGHUP) {
-                log_info("SIGHUP received; reloading sensor list");
+                log_info("SIGHUP received; reloading device lists");
                 sched.stop();
+                wsched.stop();
                 reload = true;
                 break;
             }
         }
         sched.join();
+        wsched.join();
     }
 
     if (api) api->stop();

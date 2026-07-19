@@ -35,6 +35,7 @@ test_nightwatcher.conf
 # Local secrets / env
 *.env
 nightwatcher.env
+*.local.conf
 
 # Editor / IDE
 *.swp

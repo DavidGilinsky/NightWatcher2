@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 #include "http_server.hpp"
 
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "nightwatcher/version.hpp"
 #include "nlohmann/json.hpp"
 #include "password.hpp"
+#include "provider.hpp"
 #include "sqm_device.hpp"
 #include "tcp_transport.hpp"
 
@@ -81,11 +83,54 @@ json to_json(const db::ReadingRow& r) {
                 {"temp_c", r.temp_c}, {"quality", r.quality}, {"source", r.source},
                 {"raw_line", r.raw_line}};
 }
+bool is_secret_key(const std::string& k) {
+    std::string lk;
+    for (const char c : k) lk += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return lk.find("key") != std::string::npos || lk.find("secret") != std::string::npos ||
+           lk.find("password") != std::string::npos || lk.find("token") != std::string::npos;
+}
+
+// Config with secret values redacted, for serving to clients.
+json mask_config(const std::string& config_json) {
+    if (config_json.empty()) return json::object();
+    json c;
+    try { c = json::parse(config_json); } catch (...) { return json::object(); }
+    if (!c.is_object()) return json::object();
+    for (auto& item : c.items()) {
+        if (is_secret_key(item.key()) && item.value().is_string() &&
+            !item.value().get<std::string>().empty()) {
+            item.value() = "***";
+        }
+    }
+    return c;
+}
+
+// Merge incoming config into existing, ignoring blank/masked secret values so
+// secrets aren't wiped when only other fields are edited.
+std::string merge_config(const std::string& existing_json, const json& incoming) {
+    json c;
+    try { c = existing_json.empty() ? json::object() : json::parse(existing_json); }
+    catch (...) { c = json::object(); }
+    if (!c.is_object()) c = json::object();
+    if (incoming.is_object()) {
+        for (const auto& item : incoming.items()) {
+            if (is_secret_key(item.key()) && item.value().is_string()) {
+                const std::string v = item.value().get<std::string>();
+                if (v.empty() || v == "***") continue;
+            }
+            c[item.key()] = item.value();
+        }
+    }
+    return c.dump();
+}
+
 json to_json(const db::WeatherStationRow& w) {
     return json{{"id", w.id},
                 {"name", w.name},
                 {"site", w.site},
                 {"model", w.model},
+                {"provider", w.provider},
+                {"config", mask_config(w.config)},
                 {"transport", w.transport},
                 {"address", w.address},
                 {"latitude", j_opt(w.latitude)},
@@ -97,6 +142,18 @@ json to_json(const db::WeatherStationRow& w) {
                 {"installed_at", w.installed_at},
                 {"notes", w.notes},
                 {"created_at", w.created_at}};
+}
+
+json to_json(const db::WeatherReadingRow& r) {
+    return json{{"id", r.id}, {"station_id", r.station_id}, {"ts_utc", r.ts_utc},
+                {"temp_c", j_opt(r.temp_c)}, {"humidity_pct", j_opt(r.humidity_pct)},
+                {"dew_point_c", j_opt(r.dew_point_c)}, {"pressure_hpa", j_opt(r.pressure_hpa)},
+                {"pressure_abs_hpa", j_opt(r.pressure_abs_hpa)},
+                {"wind_speed_ms", j_opt(r.wind_speed_ms)}, {"wind_gust_ms", j_opt(r.wind_gust_ms)},
+                {"wind_dir_deg", j_opt(r.wind_dir_deg)}, {"rain_rate_mmh", j_opt(r.rain_rate_mmh)},
+                {"rain_daily_mm", j_opt(r.rain_daily_mm)}, {"uv_index", j_opt(r.uv_index)},
+                {"solar_wm2", j_opt(r.solar_wm2)}, {"cloud_cover_pct", j_opt(r.cloud_cover_pct)},
+                {"source", r.source}};
 }
 json to_json(const db::TableCount& t) {
     return json{{"table", t.table}, {"present", t.present}, {"rows", t.rows}};
@@ -142,7 +199,7 @@ db::WeatherStationFields wx_fields_from_json(const json& b) {
     const auto i = [&](const char* k, std::optional<int>& o) {
         if (b.contains(k) && !b[k].is_null()) o = b[k].get<int>();
     };
-    s("name", f.name); s("site", f.site); s("model", f.model);
+    s("name", f.name); s("site", f.site); s("model", f.model); s("provider", f.provider);
     s("transport", f.transport); s("address", f.address);
     d("latitude", f.latitude); d("longitude", f.longitude); d("elevation_m", f.elevation_m);
     s("timezone", f.timezone); i("poll_interval_s", f.poll_interval_s);
@@ -434,7 +491,9 @@ void HttpServer::start() {
         try {
             db::Database db(dbc);
             const std::string id = body["id"].get<std::string>();
-            db.upsert_weather_station(id, wx_fields_from_json(body));
+            db::WeatherStationFields f = wx_fields_from_json(body);
+            if (body.contains("config") && body["config"].is_object()) f.config = body["config"].dump();
+            db.upsert_weather_station(id, f);
             const auto w = db.find_weather_station(id);
             send(res, 201, w ? to_json(*w) : json{{"id", id}});
         } catch (const std::exception& e) { send_err(res, 500, e.what()); }
@@ -446,7 +505,13 @@ void HttpServer::start() {
                   try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
                   try {
                       db::Database db(dbc);
-                      if (!db.update_weather_station(req.matches[1], wx_fields_from_json(body))) {
+                      db::WeatherStationFields f = wx_fields_from_json(body);
+                      if (body.contains("config")) {
+                          const auto existing = db.find_weather_station(req.matches[1]);
+                          if (!existing) { send_err(res, 404, "no such weather station"); return; }
+                          f.config = merge_config(existing->config, body["config"]);
+                      }
+                      if (!db.update_weather_station(req.matches[1], f)) {
                           send_err(res, 404, "no such weather station");
                           return;
                       }
@@ -463,6 +528,36 @@ void HttpServer::start() {
                        send(res, 200, json{{"deleted", std::string(req.matches[1])}});
                    } catch (const std::exception& e) { send_err(res, 500, e.what()); }
                });
+    srv.Get(R"(/api/v1/weather-stations/([^/]+)/readings)",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                const int limit = req.has_param("limit") ? std::atoi(req.get_param_value("limit").c_str()) : 100;
+                const std::string from = req.has_param("from") ? req.get_param_value("from") : "";
+                const std::string to = req.has_param("to") ? req.get_param_value("to") : "";
+                try {
+                    db::Database db(dbc);
+                    json arr = json::array();
+                    for (const auto& r : db.weather_readings_between(req.matches[1], from, to, limit))
+                        arr.push_back(to_json(r));
+                    send(res, 200, arr);
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
+    srv.Post(R"(/api/v1/weather-stations/([^/]+)/poll)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 try {
+                     db::Database db(dbc);
+                     const auto w = db.find_weather_station(req.matches[1]);
+                     if (!w) { send_err(res, 404, "no such weather station"); return; }
+                     if (w->provider.empty()) { send_err(res, 400, "no provider configured"); return; }
+                     auto provider = weather::make_provider(w->provider, w->config);
+                     db::WeatherReadingRow r = provider->fetch();
+                     r.station_id = w->id;
+                     const long long id = db.insert_weather_reading(r);
+                     json j = to_json(r);
+                     j["stored_id"] = id;
+                     send(res, 200, j);
+                 } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+             });
     srv.Post("/api/v1/db/init", [dbc, token, schema_file](const httplib::Request& req, httplib::Response& res) {
         if (!require_auth(req, res, token, dbc, true)) return;
         if (schema_file.empty()) { send_err(res, 503, "schema_file not configured"); return; }

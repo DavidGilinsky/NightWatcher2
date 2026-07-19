@@ -161,17 +161,40 @@ int main() {
         wf.address = "192.168.1.60";
         wf.latitude = 32.42;
         wf.longitude = -110.73;
+        wf.provider = "ambientweather";
+        wf.config = R"({"applicationKey":"app","apiKey":"key"})";
         dbh.upsert_weather_station("WXTEST", wf);
         const auto wfound = dbh.find_weather_station("WXTEST");
         CHECK(wfound.has_value());
         if (wfound) {
             CHECK(wfound->model == "Ambient Weather WS-2000");
             CHECK(wfound->latitude.has_value());
+            CHECK(wfound->provider == "ambientweather");
         }
         db::WeatherStationFields wupd;
         wupd.elevation_m = 810.0;
         CHECK(dbh.update_weather_station("WXTEST", wupd));
         CHECK(!dbh.update_weather_station("NOPE_WX", wupd));
+
+        // Weather readings insert + query.
+        db::WeatherReadingRow wr;
+        wr.station_id = "WXTEST";
+        wr.ts_utc = "2026-07-19 04:00:00";
+        wr.temp_c = 21.5;
+        wr.humidity_pct = 48.0;
+        wr.wind_speed_ms = 3.2;
+        CHECK(dbh.insert_weather_reading(wr) > 0);
+        const auto wrows = dbh.weather_readings("WXTEST", 10);
+        bool wr_found = false;
+        for (const auto& x : wrows) {
+            if (x.ts_utc.rfind("2026-07-19 04:00:00", 0) == 0) {
+                wr_found = true;
+                CHECK(x.temp_c.has_value() && std::fabs(*x.temp_c - 21.5) < 0.01);
+            }
+        }
+        CHECK(wr_found);
+        CHECK(dbh.weather_readings_between("WXTEST", "2000-01-01 00:00:00", "2000-01-02 00:00:00", 10).empty());
+
         dbh.remove_weather_station("WXTEST");
         CHECK(!dbh.find_weather_station("WXTEST").has_value());
 

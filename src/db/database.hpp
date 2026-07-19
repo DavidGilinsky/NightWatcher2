@@ -82,8 +82,10 @@ struct WeatherStationRow {
     std::string name;
     std::string site;
     std::string model;
-    std::string transport;  // "http" | "tcp" | "serial"
-    std::string address;
+    std::string provider;   // "ambientweather" | "wunderground"
+    std::string config;     // JSON provider settings (secrets masked when served)
+    std::string transport;  // legacy
+    std::string address;    // legacy
     std::optional<double> latitude;
     std::optional<double> longitude;
     std::optional<double> elevation_m;
@@ -100,6 +102,8 @@ struct WeatherStationFields {
     std::optional<std::string> name;
     std::optional<std::string> site;
     std::optional<std::string> model;
+    std::optional<std::string> provider;
+    std::optional<std::string> config;
     std::optional<std::string> transport;
     std::optional<std::string> address;
     std::optional<double>      latitude;
@@ -110,6 +114,28 @@ struct WeatherStationFields {
     std::optional<std::string> status;
     std::optional<std::string> installed_at;
     std::optional<std::string> notes;
+};
+
+// One weather observation (metric/SI units) as stored in weather_readings.
+struct WeatherReadingRow {
+    long long id = 0;
+    std::string station_id;
+    std::string ts_utc;
+    std::optional<double> temp_c;
+    std::optional<double> humidity_pct;
+    std::optional<double> dew_point_c;
+    std::optional<double> pressure_hpa;
+    std::optional<double> pressure_abs_hpa;
+    std::optional<double> wind_speed_ms;
+    std::optional<double> wind_gust_ms;
+    std::optional<int>    wind_dir_deg;
+    std::optional<double> rain_rate_mmh;
+    std::optional<double> rain_daily_mm;
+    std::optional<double> uv_index;
+    std::optional<double> solar_wm2;
+    std::optional<double> cloud_cover_pct;
+    std::string source;
+    std::string raw;
 };
 
 // One row of schema_status(): a known table and its row count.
@@ -197,8 +223,15 @@ public:
     void upsert_weather_station(const std::string& id, const WeatherStationFields& f);
     bool update_weather_station(const std::string& id, const WeatherStationFields& f);
     std::vector<WeatherStationRow> weather_stations();
+    std::vector<WeatherStationRow> active_weather_stations();
     std::optional<WeatherStationRow> find_weather_station(const std::string& id);
     void remove_weather_station(const std::string& id);
+
+    long long insert_weather_reading(const WeatherReadingRow& r);
+    std::vector<WeatherReadingRow> weather_readings(const std::string& station_id, int limit = 20);
+    std::vector<WeatherReadingRow> weather_readings_between(const std::string& station_id,
+                                                           const std::string& from,
+                                                           const std::string& to, int limit = 5000);
 
     // --- Maintenance ---
     // Delete readings for a sensor with ts_utc < the given timestamp; returns the

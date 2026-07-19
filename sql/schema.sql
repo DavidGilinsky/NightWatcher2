@@ -112,8 +112,10 @@ CREATE TABLE IF NOT EXISTS weather_stations (
     name            VARCHAR(128) NULL,
     site            VARCHAR(64)  NULL,                   -- shared with a co-located sensor
     model           VARCHAR(64)  NULL,                   -- e.g. 'Ambient Weather WS-2000'
-    transport       VARCHAR(16)  NULL,                   -- 'http','tcp','serial', ...
-    address         VARCHAR(255) NULL,                   -- host:port / URL / device path
+    provider        VARCHAR(32)  NULL,                   -- 'ambientweather' | 'wunderground'
+    config          TEXT         NULL,                   -- JSON: provider settings (may include secrets)
+    transport       VARCHAR(16)  NULL,                   -- legacy; providers use `config`
+    address         VARCHAR(255) NULL,                   -- legacy; providers use `config`
     latitude        DECIMAL(9,6) NULL,
     longitude       DECIMAL(9,6) NULL,
     elevation_m     DECIMAL(7,1) NULL,
@@ -178,3 +180,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     CONSTRAINT fk_sessions_user FOREIGN KEY (user_id)
         REFERENCES users (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- Migrations for existing databases (idempotent; MariaDB IF NOT EXISTS).
+ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NULL;
+ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS config   TEXT        NULL;

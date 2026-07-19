@@ -75,6 +75,14 @@ if(NW_WITH_DB)
     pkg_check_modules(MARIADB REQUIRED libmariadb)
     find_package(OpenSSL REQUIRED)
 
+    # ---- Vendored httplib with OpenSSL client support (one config across all TUs) ----
+    add_library(nw_httplib INTERFACE)
+    target_include_directories(nw_httplib SYSTEM INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
+    target_compile_definitions(nw_httplib INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT)
+    target_link_libraries(nw_httplib INTERFACE OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
+
     # ---- Auth / crypto (PBKDF2 password hashing + random tokens via OpenSSL) ----
     add_library(nw_auth STATIC src/auth/password.cpp)
     target_include_directories(nw_auth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
@@ -90,21 +98,24 @@ if(NW_WITH_DB)
     target_link_directories(nw_db PUBLIC ${MARIADB_LIBRARY_DIRS})
     target_link_libraries(nw_db PUBLIC nw_warnings ${MARIADB_LIBRARIES})
 
+    # ---- Weather providers + scheduler (modular, pull-based) ----
+    add_library(nw_weather STATIC
+        src/weather/provider.cpp
+        src/weather/weather_scheduler.cpp)
+    target_include_directories(nw_weather PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/weather)
+    target_link_libraries(nw_weather PUBLIC nw_db nw_core nw_httplib)
+
     add_executable(nwdb src/cli/nwdb.cpp)
     target_link_libraries(nwdb PRIVATE nw_db nw_sqm)
 
     # ---- HTTP/JSON API (embedded in the daemon; cpp-httplib + nlohmann/json) ----
     add_library(nw_api STATIC src/api/http_server.cpp)
     target_include_directories(nw_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/api)
-    # Vendored headers are SYSTEM includes so their warnings don't fail our strict build.
-    target_include_directories(nw_api SYSTEM PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
-        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
-    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth Threads::Threads)
+    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth nw_weather nw_httplib Threads::Threads)
 
     # The daemon records to the database and serves the API, so it needs the DB layer.
     add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)
-    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db nw_api Threads::Threads)
+    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db nw_api nw_weather Threads::Threads)
 endif()
 
 # ---- Install rules ----
@@ -144,6 +155,10 @@ if(NW_BUILD_TESTS)
         add_executable(api_test tests/api_test.cpp)
         target_link_libraries(api_test PRIVATE nw_api)
         add_test(NAME api_test COMMAND api_test)
+
+        add_executable(weather_test tests/weather_test.cpp)
+        target_link_libraries(weather_test PRIVATE nw_weather)
+        add_test(NAME weather_test COMMAND weather_test)
     endif()
 
     # Software SQM simulator (TCP) for local end-to-end testing without hardware.
