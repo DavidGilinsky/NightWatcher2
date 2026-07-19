@@ -198,9 +198,52 @@ int main() {
         dbh.remove_weather_station("WXTEST");
         CHECK(!dbh.find_weather_station("WXTEST").has_value());
 
-        // Schema status reports the six known tables, sensors present.
+        // Export-target CRUD + export log (FK to the test sensor).
+        dbh.remove_export_target("EXTEST");
+        db::ExportTargetFields ef;
+        ef.sensor_id = kId;
+        ef.name = "DSN export test";
+        ef.target = "dsn";
+        ef.config = R"({"site_id":"DSN036-S","outbox_dir":"/tmp"})";
+        ef.schedule = "nightly";
+        ef.schedule_time = "06:00";
+        dbh.upsert_export_target("EXTEST", ef);
+        const auto efound = dbh.find_export_target("EXTEST");
+        CHECK(efound.has_value());
+        if (efound) {
+            CHECK(efound->target == "dsn");
+            CHECK(efound->sensor_id == kId);
+            CHECK(efound->schedule == "nightly");
+        }
+        db::ExportTargetFields eupd;
+        eupd.status = "inactive";
+        CHECK(dbh.update_export_target("EXTEST", eupd));
+        CHECK(!dbh.update_export_target("NOPE_EX", eupd));
+        // Inactive target must not appear in active_export_targets().
+        for (const auto& t : dbh.active_export_targets()) CHECK(t.id != "EXTEST");
+        dbh.set_export_watermark("EXTEST", kTs);
+        CHECK(dbh.find_export_target("EXTEST")->last_export_ts.rfind(kTs, 0) == 0);
+
+        db::ExportLogRow el;
+        el.target_id = "EXTEST";
+        el.from_ts = "2026-07-19 00:00:00";
+        el.to_ts = "2026-07-19 23:59:59";
+        el.row_count = 42;
+        el.file_name = "DSN036-S_20260719.dat";
+        el.status = "ok";
+        CHECK(dbh.insert_export_log(el) > 0);
+        const auto elog = dbh.export_log("EXTEST", 10);
+        CHECK(!elog.empty());
+        if (!elog.empty()) {
+            CHECK(elog.front().row_count == 42);
+            CHECK(elog.front().status == "ok");
+        }
+        dbh.remove_export_target("EXTEST");
+        CHECK(!dbh.find_export_target("EXTEST").has_value());
+
+        // Schema status reports the ten known tables, sensors present.
         const auto st = dbh.schema_status();
-        CHECK(st.size() == 8);
+        CHECK(st.size() == 10);
         bool sensors_present = false;
         for (const auto& tc : st) {
             if (tc.table == "sensors") sensors_present = tc.present;

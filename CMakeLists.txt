@@ -105,6 +105,13 @@ if(NW_WITH_DB)
     target_include_directories(nw_weather PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/weather)
     target_link_libraries(nw_weather PUBLIC nw_db nw_core nw_httplib)
 
+    # ---- Data-export module (DSN / Globe at Night; modular, like weather) ----
+    add_library(nw_export STATIC
+        src/export/exporter.cpp
+        src/export/dsn_format.cpp)
+    target_include_directories(nw_export PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
+    target_link_libraries(nw_export PUBLIC nw_db nw_core nw_httplib)
+
     add_executable(nwdb src/cli/nwdb.cpp)
     target_link_libraries(nwdb PRIVATE nw_db nw_sqm)
 
@@ -159,6 +166,10 @@ if(NW_BUILD_TESTS)
         add_executable(weather_test tests/weather_test.cpp)
         target_link_libraries(weather_test PRIVATE nw_weather)
         add_test(NAME weather_test COMMAND weather_test)
+
+        add_executable(export_test tests/export_test.cpp)
+        target_link_libraries(export_test PRIVATE nw_export)
+        add_test(NAME export_test COMMAND export_test)
     endif()
 
     # Software SQM simulator (TCP) for local end-to-end testing without hardware.

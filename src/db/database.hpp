@@ -138,6 +138,49 @@ struct WeatherReadingRow {
     std::string raw;
 };
 
+// A data-export target: push a sensor's readings to an external network.
+struct ExportTargetRow {
+    std::string id;
+    std::string sensor_id;
+    std::string name;
+    std::string target;         // "dsn" | "globeatnight"
+    std::string config;         // JSON endpoint settings (secrets masked when served)
+    std::string schedule;       // "nightly" | "manual" | "interval"
+    std::string schedule_time;  // "HH:MM" local (nightly), or empty
+    std::optional<int> interval_s;
+    std::string last_export_ts; // watermark (UTC) or empty
+    std::string status;
+    std::string notes;
+    std::string created_at;
+};
+
+// Editable export-target fields (only set members are written).
+struct ExportTargetFields {
+    std::optional<std::string> sensor_id;
+    std::optional<std::string> name;
+    std::optional<std::string> target;
+    std::optional<std::string> config;
+    std::optional<std::string> schedule;
+    std::optional<std::string> schedule_time;
+    std::optional<int>         interval_s;
+    std::optional<std::string> status;
+    std::optional<std::string> notes;
+};
+
+// One export run (audit trail row).
+struct ExportLogRow {
+    long long id = 0;
+    std::string target_id;
+    std::string ts_utc;
+    std::string from_ts;
+    std::string to_ts;
+    long long row_count = 0;
+    std::string file_name;
+    std::string remote_id;
+    std::string status;  // "ok" | "error" | "empty"
+    std::string detail;
+};
+
 // One row of schema_status(): a known table and its row count.
 struct TableCount {
     std::string table;
@@ -232,6 +275,19 @@ public:
     std::vector<WeatherReadingRow> weather_readings_between(const std::string& station_id,
                                                            const std::string& from,
                                                            const std::string& to, int limit = 5000);
+
+    // --- Export targets ---
+    void upsert_export_target(const std::string& id, const ExportTargetFields& f);
+    bool update_export_target(const std::string& id, const ExportTargetFields& f);
+    std::vector<ExportTargetRow> export_targets();
+    std::vector<ExportTargetRow> active_export_targets();
+    std::optional<ExportTargetRow> find_export_target(const std::string& id);
+    void remove_export_target(const std::string& id);
+    // Record the newest reading ts_utc successfully exported (the resume watermark).
+    void set_export_watermark(const std::string& id, const std::string& last_export_ts);
+
+    long long insert_export_log(const ExportLogRow& r);
+    std::vector<ExportLogRow> export_log(const std::string& target_id, int limit = 50);
 
     // --- Maintenance ---
     // Delete readings for a sensor with ts_utc < the given timestamp; returns the

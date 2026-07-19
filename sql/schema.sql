@@ -2,7 +2,8 @@
 -- Author:        David Gilinsky
 -- File:          sql/schema.sql
 -- Purpose:       MariaDB/MySQL schema: sensors, readings, config_log, events,
---                and weather_stations/weather_readings tables.
+--                weather_stations/weather_readings, users/sessions, and
+--                export_targets/export_log tables.
 -- Created:       2026-07-18
 -- Last Modified: 2026-07-18
 -- Version:       0.1.0
@@ -179,6 +180,46 @@ CREATE TABLE IF NOT EXISTS sessions (
     KEY idx_sessions_user (user_id),
     CONSTRAINT fk_sessions_user FOREIGN KEY (user_id)
         REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Data-export targets: push a sensor's readings to an external network (Dark Sky
+-- Network Google Drive, Globe at Night, ...). Modular like the weather providers:
+-- `target` selects the exporter, `config` (JSON) holds its per-endpoint settings.
+CREATE TABLE IF NOT EXISTS export_targets (
+    id              VARCHAR(32)  NOT NULL,               -- e.g. 'dsn-036'
+    sensor_id       VARCHAR(32)  NOT NULL,               -- SQM whose readings are exported
+    name            VARCHAR(128) NULL,
+    target          VARCHAR(32)  NOT NULL,               -- 'dsn' | 'globeatnight'
+    config          TEXT         NULL,                   -- JSON endpoint settings (may include secrets)
+    schedule        ENUM('nightly','manual','interval') NOT NULL DEFAULT 'nightly',
+    schedule_time   VARCHAR(5)   NULL,                   -- 'HH:MM' local, for the nightly schedule
+    interval_s      INT          NULL,                   -- period for the 'interval' schedule
+    last_export_ts  DATETIME     NULL,                   -- watermark: newest reading ts_utc exported
+    status          ENUM('active','inactive','retired') NOT NULL DEFAULT 'active',
+    notes           TEXT         NULL,
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_export_sensor (sensor_id),
+    CONSTRAINT fk_export_sensor FOREIGN KEY (sensor_id)
+        REFERENCES sensors (id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- One row per export run (audit trail). target_id is a free reference (no FK) so
+-- the log survives target deletion, like the events table.
+CREATE TABLE IF NOT EXISTS export_log (
+    id          BIGINT       NOT NULL AUTO_INCREMENT,
+    target_id   VARCHAR(32)  NOT NULL,
+    ts_utc      DATETIME     NOT NULL,                   -- when the export ran (UTC)
+    from_ts     DATETIME     NULL,                       -- reading window covered (UTC)
+    to_ts       DATETIME     NULL,
+    row_count   INT          NOT NULL DEFAULT 0,         -- readings exported
+    file_name   VARCHAR(255) NULL,                       -- generated file name
+    remote_id   VARCHAR(255) NULL,                       -- Drive file id / URL
+    status      ENUM('ok','error','empty') NOT NULL DEFAULT 'ok',
+    detail      TEXT         NULL,                        -- error message / notes
+    created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_export_log_target_ts (target_id, ts_utc)
 ) ENGINE=InnoDB;
 
 -- Migrations for existing databases (idempotent; MariaDB IF NOT EXISTS).

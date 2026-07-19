@@ -549,6 +549,165 @@ std::vector<WeatherReadingRow> Database::weather_readings(const std::string& sta
     return weather_readings_between(station_id, "", "", limit);
 }
 
+// ---- Export targets -------------------------------------------------------
+namespace {
+const char* const kExportCols =
+    "id, sensor_id, name, target, config, schedule, schedule_time, interval_s, "
+    "last_export_ts, status, notes, created_at";
+
+ExportTargetRow export_from_row(MYSQL_ROW row) {
+    ExportTargetRow t;
+    t.id = row[0] ? row[0] : "";
+    t.sensor_id = row[1] ? row[1] : "";
+    t.name = row[2] ? row[2] : "";
+    t.target = row[3] ? row[3] : "";
+    t.config = row[4] ? row[4] : "";
+    t.schedule = row[5] ? row[5] : "";
+    t.schedule_time = row[6] ? row[6] : "";
+    if (row[7]) t.interval_s = std::atoi(row[7]);
+    t.last_export_ts = row[8] ? row[8] : "";
+    t.status = row[9] ? row[9] : "";
+    t.notes = row[10] ? row[10] : "";
+    t.created_at = row[11] ? row[11] : "";
+    return t;
+}
+
+ExportLogRow exportlog_from_row(MYSQL_ROW row) {
+    ExportLogRow r;
+    r.id = row[0] ? std::atoll(row[0]) : 0;
+    r.target_id = row[1] ? row[1] : "";
+    r.ts_utc = row[2] ? row[2] : "";
+    r.from_ts = row[3] ? row[3] : "";
+    r.to_ts = row[4] ? row[4] : "";
+    r.row_count = row[5] ? std::atoll(row[5]) : 0;
+    r.file_name = row[6] ? row[6] : "";
+    r.remote_id = row[7] ? row[7] : "";
+    r.status = row[8] ? row[8] : "";
+    r.detail = row[9] ? row[9] : "";
+    return r;
+}
+}  // namespace
+
+void Database::upsert_export_target(const std::string& id, const ExportTargetFields& f) {
+    std::vector<std::string> cols{"id"};
+    std::vector<std::string> vals{"'" + esc(id) + "'"};
+    std::vector<std::string> ups;
+    const auto addS = [&](const char* c, const std::optional<std::string>& v) {
+        if (v) { cols.emplace_back(c); vals.push_back("'" + esc(*v) + "'"); ups.push_back(std::string(c) + "=VALUES(" + c + ")"); }
+    };
+    const auto addI = [&](const char* c, const std::optional<int>& v) {
+        if (v) { cols.emplace_back(c); vals.push_back(std::to_string(*v)); ups.push_back(std::string(c) + "=VALUES(" + c + ")"); }
+    };
+    addS("sensor_id", f.sensor_id); addS("name", f.name); addS("target", f.target);
+    addS("config", f.config); addS("schedule", f.schedule); addS("schedule_time", f.schedule_time);
+    addI("interval_s", f.interval_s); addS("status", f.status); addS("notes", f.notes);
+
+    std::ostringstream q;
+    q << "INSERT INTO export_targets (";
+    for (size_t i = 0; i < cols.size(); ++i) { if (i) q << ", "; q << cols[i]; }
+    q << ") VALUES (";
+    for (size_t i = 0; i < vals.size(); ++i) { if (i) q << ", "; q << vals[i]; }
+    q << ")";
+    if (!ups.empty()) {
+        q << " ON DUPLICATE KEY UPDATE ";
+        for (size_t i = 0; i < ups.size(); ++i) { if (i) q << ", "; q << ups[i]; }
+    }
+    exec(q.str());
+}
+
+bool Database::update_export_target(const std::string& id, const ExportTargetFields& f) {
+    if (!find_export_target(id)) return false;
+    std::vector<std::string> sets;
+    const auto setS = [&](const char* c, const std::optional<std::string>& v) { if (v) sets.push_back(std::string(c) + "='" + esc(*v) + "'"); };
+    const auto setI = [&](const char* c, const std::optional<int>& v) { if (v) sets.push_back(std::string(c) + "=" + std::to_string(*v)); };
+    setS("sensor_id", f.sensor_id); setS("name", f.name); setS("target", f.target);
+    setS("config", f.config); setS("schedule", f.schedule); setS("schedule_time", f.schedule_time);
+    setI("interval_s", f.interval_s); setS("status", f.status); setS("notes", f.notes);
+    if (sets.empty()) return true;
+    std::ostringstream q;
+    q << "UPDATE export_targets SET ";
+    for (size_t i = 0; i < sets.size(); ++i) { if (i) q << ", "; q << sets[i]; }
+    q << " WHERE id='" << esc(id) << "'";
+    exec(q.str());
+    return true;
+}
+
+std::vector<ExportTargetRow> Database::export_targets() {
+    exec(std::string("SELECT ") + kExportCols + " FROM export_targets ORDER BY id");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::vector<ExportTargetRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) out.push_back(export_from_row(row));
+    mysql_free_result(res);
+    return out;
+}
+
+std::vector<ExportTargetRow> Database::active_export_targets() {
+    exec(std::string("SELECT ") + kExportCols + " FROM export_targets WHERE status='active' ORDER BY id");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::vector<ExportTargetRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) out.push_back(export_from_row(row));
+    mysql_free_result(res);
+    return out;
+}
+
+std::optional<ExportTargetRow> Database::find_export_target(const std::string& id) {
+    std::ostringstream q;
+    q << "SELECT " << kExportCols << " FROM export_targets WHERE id='" << esc(id) << "' LIMIT 1";
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::optional<ExportTargetRow> out;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) out = export_from_row(row);
+    mysql_free_result(res);
+    return out;
+}
+
+void Database::remove_export_target(const std::string& id) {
+    std::ostringstream q;
+    q << "DELETE FROM export_targets WHERE id='" << esc(id) << "'";
+    exec(q.str());
+}
+
+void Database::set_export_watermark(const std::string& id, const std::string& last_export_ts) {
+    std::ostringstream q;
+    q << "UPDATE export_targets SET last_export_ts='" << esc(last_export_ts) << "' WHERE id='" << esc(id) << "'";
+    exec(q.str());
+}
+
+long long Database::insert_export_log(const ExportLogRow& r) {
+    const auto opt = [this](const std::string& s) { return s.empty() ? std::string("NULL") : ("'" + esc(s) + "'"); };
+    std::ostringstream q;
+    q << "INSERT INTO export_log (target_id, ts_utc, from_ts, to_ts, row_count, file_name, "
+         "remote_id, status, detail) VALUES ('"
+      << esc(r.target_id) << "', "
+      << (r.ts_utc.empty() ? std::string("UTC_TIMESTAMP()") : ("'" + esc(r.ts_utc) + "'")) << ", "
+      << opt(r.from_ts) << ", " << opt(r.to_ts) << ", " << r.row_count << ", "
+      << opt(r.file_name) << ", " << opt(r.remote_id) << ", '"
+      << esc(r.status.empty() ? "ok" : r.status) << "', " << opt(r.detail) << ")";
+    exec(q.str());
+    return static_cast<long long>(mysql_insert_id(impl_->conn));
+}
+
+std::vector<ExportLogRow> Database::export_log(const std::string& target_id, int limit) {
+    if (limit < 1) limit = 1;
+    std::ostringstream q;
+    q << "SELECT id, target_id, ts_utc, from_ts, to_ts, row_count, file_name, remote_id, status, detail "
+         "FROM export_log WHERE target_id='" << esc(target_id) << "' ORDER BY ts_utc DESC, id DESC LIMIT "
+      << limit;
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::vector<ExportLogRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) out.push_back(exportlog_from_row(row));
+    mysql_free_result(res);
+    return out;
+}
+
 long long Database::delete_readings_before(const std::string& sensor_id, const std::string& ts_utc) {
     std::ostringstream q;
     q << "DELETE FROM readings WHERE sensor_id='" << esc(sensor_id) << "' AND ts_utc < '"
@@ -571,7 +730,8 @@ std::vector<TableCount> Database::schema_status() {
     static const char* const kKnown[] = {"sensors",          "readings",
                                          "config_log",       "events",
                                          "weather_stations", "weather_readings",
-                                         "users",            "sessions"};
+                                         "users",            "sessions",
+                                         "export_targets",   "export_log"};
     std::vector<TableCount> out;
     for (const char* t : kKnown) {
         TableCount tc;
