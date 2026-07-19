@@ -59,9 +59,9 @@ static ex::ExportContext make_ctx() {
     s.model = "SQM-LE";
     s.serial_number = "00007141";
     s.feature_ver = 44;
-    s.latitude = 32.3030;
-    s.longitude = -110.9860;
-    s.elevation_m = 639.0;
+    s.latitude = 31.9500;   // obfuscated placeholder (not a real site)
+    s.longitude = -111.6000;
+    s.elevation_m = 1200.0;
     s.timezone = "America/Phoenix";  // fixed UTC-7, no DST
 
     ex::ExportContext ctx;
@@ -107,7 +107,7 @@ int main() {
     CHECK(header_lines == 35);
     CHECK(declared == 35);
 
-    CHECK(contains(dat, "# Position (lat, lon, elev(m)): +32.3030, -110.9860, +639"));
+    CHECK(contains(dat, "# Position (lat, lon, elev(m)): +31.9500, -111.6000, +1200"));
     CHECK(contains(dat, "# Local timezone: America/Phoenix"));
     CHECK(contains(dat, "# SQM serial number: 7141"));  // leading zeros stripped
     CHECK(contains(dat, "# Number of fields per line: 6"));

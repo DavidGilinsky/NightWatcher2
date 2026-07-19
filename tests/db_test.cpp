@@ -52,9 +52,9 @@ int main() {
         sf.name = "Integration Test";
         sf.transport = "tcp";
         sf.address = "127.0.0.1:10001";
-        sf.latitude = 32.4188;
-        sf.longitude = -110.7345;
-        sf.elevation_m = 2791.0;
+        sf.latitude = 31.9500;   // obfuscated placeholder (not a real site)
+        sf.longitude = -111.6000;
+        sf.elevation_m = 1200.0;
         sf.timezone = "America/Phoenix";
         dbh.upsert_sensor(kId, sf);
 
@@ -65,18 +65,18 @@ int main() {
             CHECK(found->name == "Integration Test");
             CHECK(found->timezone == "America/Phoenix");
             CHECK(found->latitude.has_value());
-            if (found->latitude) CHECK(std::fabs(*found->latitude - 32.4188) < 1e-4);
+            if (found->latitude) CHECK(std::fabs(*found->latitude - 31.9500) < 1e-4);
         }
 
         // Partial update: change only elevation; other fields must be preserved.
         db::SensorFields upd;
-        upd.elevation_m = 2795.0;
+        upd.elevation_m = 1205.0;
         CHECK(dbh.update_sensor(kId, upd));
         const auto found2 = dbh.find_sensor(kId);
         if (found2) {
             CHECK(found2->name == "Integration Test");  // preserved by partial update
             CHECK(found2->elevation_m.has_value());
-            if (found2->elevation_m) CHECK(std::fabs(*found2->elevation_m - 2795.0) < 1e-3);
+            if (found2->elevation_m) CHECK(std::fabs(*found2->elevation_m - 1205.0) < 1e-3);
         }
         // Updating a nonexistent sensor returns false and creates nothing.
         CHECK(!dbh.update_sensor("NOPE_NWTEST", upd));
@@ -160,8 +160,8 @@ int main() {
         wf.model = "Ambient Weather WS-2000";
         wf.transport = "http";
         wf.address = "192.168.1.60";
-        wf.latitude = 32.42;
-        wf.longitude = -110.73;
+        wf.latitude = 31.95;
+        wf.longitude = -111.60;
         wf.provider = "ambientweather";
         wf.config = R"({"applicationKey":"app","apiKey":"key"})";
         dbh.upsert_weather_station("WXTEST", wf);

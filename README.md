@@ -127,9 +127,9 @@ device via `ix` unless `--no-probe`):
 ```sh
 nwdb add-sensor DSN003 --tcp 172.22.4.112:10001 \
      --name Sugarloaf --site "Sugarloaf Peak" \
-     --lat 32.4188 --lon -110.7345 --elev 2791 \
+     --lat 31.9500 --lon -111.6000 --elev 1200 \
      --timezone America/Phoenix --installed 2026-07-18
-nwdb set-sensor DSN003 --elev 2795    # partial edit — only elevation changes
+nwdb set-sensor DSN003 --elev 1205    # partial edit — only elevation changes
 nwdb show DSN003                      # full metadata for one sensor
 nwdb sensors                          # list registered sensors
 nwdb poll DSN003                      # read the SQM now and store the reading
@@ -166,8 +166,8 @@ curl -s "localhost:8080/api/v1/discover?cidr=172.22.4.0/24"
 
 AUTH="Authorization: Bearer $NW_API_TOKEN"
 curl -s -X POST  localhost:8080/api/v1/sensors -H "$AUTH" \
-  -d '{"id":"DSN003","tcp":"172.22.4.112:10001","name":"Sugarloaf","lat":32.4188,"lon":-110.7345,"elev":2791}'
-curl -s -X PATCH localhost:8080/api/v1/sensors/DSN003 -H "$AUTH" -d '{"elevation_m":2795}'
+  -d '{"id":"DSN003","tcp":"172.22.4.112:10001","name":"Sugarloaf","lat":31.9500,"lon":-111.6000,"elev":1200}'
+curl -s -X PATCH localhost:8080/api/v1/sensors/DSN003 -H "$AUTH" -d '{"elevation_m":1205}'
 curl -s -X POST  localhost:8080/api/v1/sensors/DSN003/poll -H "$AUTH"
 curl -s -X POST  localhost:8080/api/v1/db/init -H "$AUTH"     # create any missing tables
 ```
