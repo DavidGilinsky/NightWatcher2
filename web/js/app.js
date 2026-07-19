@@ -778,7 +778,7 @@ async function viewServer() {
     const local = b === '' || b === '127.0.0.1' || b === 'localhost' || b === '::1';
     warn.innerHTML = '';
     if (!local) warn.append(msg('warn',
-      '⚠ Exposing the server beyond localhost makes the UI and API reachable on your network. Read endpoints are unauthenticated, so anyone who can reach this host can view your sensor data and configuration.'));
+      '⚠ Off localhost, the UI and API become reachable across your network. In this mode every request — reads included — requires a login or the API token, so set a strong admin password first. Traffic is still plain HTTP, so only expose this on a trusted network.'));
   };
   bindInput.addEventListener('input', updateWarn); updateWarn();
   f.append(warn);

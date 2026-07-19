@@ -187,6 +187,10 @@ int main(int argc, char** argv) {
             ac.schema_file = cfg.schema_file;
             ac.web_root = cfg.web_root;
             ac.db = db_cfg;
+            // Off localhost, require auth for reads too — never expose readings
+            // world-open on the LAN. The localhost fallback below re-enables open
+            // reads because it passes "127.0.0.1" here.
+            ac.require_auth_reads = (b != "127.0.0.1" && b != "localhost" && b != "::1");
             ac.on_apply = [] { kill(getpid(), SIGUSR1); };  // raised by POST /settings/apply
             auto srv = std::make_unique<HttpServer>(std::move(ac));
             srv->start();  // throws on bind failure

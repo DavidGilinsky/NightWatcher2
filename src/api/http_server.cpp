@@ -405,6 +405,25 @@ void HttpServer::start() {
         srv.set_mount_point("/", impl_->cfg.web_root);
     }
 
+    // Security gate: when the server is exposed off localhost the daemon sets
+    // require_auth_reads, so every API request must carry a session or token —
+    // not just the mutating ones (those stay gated in their own handlers). The
+    // static web shell and the sign-in / liveness endpoints stay public so the
+    // login page can load and users can authenticate.
+    if (impl_->cfg.require_auth_reads) {
+        srv.set_pre_routing_handler(
+            [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                using HR = httplib::Server::HandlerResponse;
+                if (req.path.rfind("/api/v1/", 0) != 0) return HR::Unhandled;  // static UI shell
+                if (req.path == "/api/v1/login" || req.path == "/api/v1/logout" ||
+                    req.path == "/api/v1/me" || req.path == "/api/v1/version" ||
+                    req.path == "/api/v1/health")
+                    return HR::Unhandled;  // public: sign-in + liveness
+                if (!require_auth(req, res, token, dbc, false)) return HR::Handled;  // 401 already sent
+                return HR::Unhandled;
+            });
+    }
+
     // ---- read endpoints ----
     srv.Get("/api/v1/version", [](const httplib::Request&, httplib::Response& res) {
         send(res, 200, json{{"version", NIGHTWATCHER_VERSION}});

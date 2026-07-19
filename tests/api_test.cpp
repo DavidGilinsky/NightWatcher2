@@ -236,6 +236,39 @@ int main() {
         d.delete_user("apiadmin");
     }
 
+    // ---- read-auth gate (as set when bound off localhost) ----
+    // A second server with require_auth_reads forces the gate on even for this
+    // local client, so reads now demand a session or token; the sign-in and
+    // liveness endpoints stay public.
+    {
+        ApiConfig rcfg;
+        rcfg.bind = "127.0.0.1";
+        rcfg.port = 18100;
+        rcfg.token = "testtoken";
+        rcfg.db = db::DbConfig::from_env();
+        rcfg.require_auth_reads = true;
+        HttpServer rserver(rcfg);
+        try {
+            rserver.start();
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "api_test: gated server start failed: %s\n", e.what());
+            return 1;
+        }
+        httplib::Client rc("127.0.0.1", 18100);
+        rc.set_connection_timeout(2, 0);
+        httplib::Result rr;
+        for (int i = 0; i < 100; ++i) {
+            rr = rc.Get("/api/v1/version");
+            if (rr && rr->status == 200) break;
+        }
+        CHECK(rr && rr->status == 200);                                // version stays public
+        CHECK((rr = rc.Get("/api/v1/health")) && rr->status == 200);   // liveness stays public
+        CHECK((rr = rc.Get("/api/v1/sensors")) && rr->status == 401);  // read now gated
+        const httplib::Headers ra = {{"Authorization", "Bearer testtoken"}};
+        CHECK((rr = rc.Get("/api/v1/sensors", ra)) && rr->status == 200);  // token authorizes it
+        rserver.stop();
+    }
+
     server.stop();
 
     if (g_failures == 0) {

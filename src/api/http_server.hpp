@@ -26,6 +26,11 @@ struct ApiConfig {
     std::string schema_file;  // path to schema.sql for POST /db/init
     std::string web_root;     // static files directory (optional)
     db::DbConfig db;
+    // When true, read endpoints also require a valid session or API token, not
+    // just writes. The daemon sets this whenever the server is bound off
+    // localhost, so exposing the UI to the LAN never leaves readings world-open.
+    // Localhost binds leave reads open for convenience.
+    bool require_auth_reads = false;
     // Invoked (after the response) when POST /settings/apply is called, so the
     // daemon can restart the server on a changed bind. Empty = the endpoint is a
     // no-op (e.g. in tests).
