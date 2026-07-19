@@ -400,7 +400,7 @@ async function viewQuery() {
   const tblWrap = el('div', { class: 'tablebox', style: 'margin-top:1rem' });
 
   const toUtc = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
-  const load = async () => {
+  const rangeParams = () => {
     let from = '', to = '';
     const days = { day: 1, week: 7, month: 30, year: 365 };
     if (rangeSel.value === 'custom') {
@@ -409,6 +409,10 @@ async function viewQuery() {
     } else {
       from = toUtc(Date.now() - days[rangeSel.value] * 86400000);
     }
+    return { from, to };
+  };
+  const load = async () => {
+    const { from, to } = rangeParams();
     const p = new URLSearchParams({ limit: '50000' });
     if (from) p.set('from', from);
     if (to) p.set('to', to);
@@ -448,17 +452,34 @@ async function viewQuery() {
     } catch (e) { chart.innerHTML = ''; chart.append(msg('err', e.message)); }
   };
 
+  // Download a DSN community-format .dat for the selected sensor + range.
+  const downloadDsn = () => {
+    const idx = sel.value.indexOf(':');
+    if (sel.value.slice(0, idx) !== 'sensor') return;
+    const id = sel.value.slice(idx + 1);
+    const { from, to } = rangeParams();
+    const p = new URLSearchParams();
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    const a = el('a', { href: `/api/v1/sensors/${encodeURIComponent(id)}/dsn?${p}`, download: '' });
+    document.body.append(a); a.click(); a.remove();
+  };
+  const dsnBtn = el('button', { class: 'btn ghost', onclick: downloadDsn }, 'Download DSN file');
+  const updateDsnBtn = () => { dsnBtn.style.display = sel.value.startsWith('sensor:') ? '' : 'none'; };
+
   rangeSel.addEventListener('change', () => {
     customWrap.style.display = rangeSel.value === 'custom' ? '' : 'none';
     if (rangeSel.value !== 'custom') load();
   });
-  sel.addEventListener('change', load);
+  sel.addEventListener('change', () => { updateDsnBtn(); load(); });
 
   frag.append(el('div', { class: 'toolbar' },
     el('span', { class: 'muted' }, 'Source'), sel,
     el('span', { class: 'muted' }, 'Range'), rangeSel,
     customWrap,
-    el('button', { class: 'btn', onclick: load }, 'Load')));
+    el('button', { class: 'btn', onclick: load }, 'Load'),
+    dsnBtn));
+  updateDsnBtn();
   frag.append(caption, chart, tblWrap);
   setTimeout(load, 0);
   return frag;

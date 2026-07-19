@@ -10,6 +10,7 @@
 // ---------------------------------------------------------------------------
 #include "http_server.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -22,6 +23,7 @@
 
 #include "discovery.hpp"
 #include "export_runner.hpp"
+#include "exporter.hpp"
 #include "httplib.h"
 #include "logging.hpp"
 #include "nightwatcher/version.hpp"
@@ -147,6 +149,28 @@ std::string merge_config(const std::string& existing_json, const json& incoming)
     catch (...) { c = json::object(); }
     if (!c.is_object()) c = json::object();
     return merge_config_json(c, incoming).dump();
+}
+
+// Download file name for an ad-hoc DSN export over a date range:
+// "<site|id>_<from-date>_<to-date>.dat", sanitized for a Content-Disposition header.
+std::string dsn_download_name(const std::string& id, const std::string& config,
+                              const std::string& from, const std::string& to) {
+    std::string site = id;
+    if (!config.empty()) {
+        try {
+            const json c = json::parse(config);
+            if (c.contains("site_id") && c["site_id"].is_string() &&
+                !c["site_id"].get<std::string>().empty())
+                site = c["site_id"].get<std::string>();
+        } catch (...) { /* fall back to id */ }
+    }
+    const std::string fd = from.size() >= 10 ? from.substr(0, 10) : "start";
+    const std::string td = to.size() >= 10 ? to.substr(0, 10) : "end";
+    std::string out;
+    for (const char ch : site + "_" + fd + "_" + td + ".dat")
+        out += (std::isalnum(static_cast<unsigned char>(ch)) || ch == '-' || ch == '_' || ch == '.')
+                   ? ch : '_';
+    return out;
 }
 
 json to_json(const db::WeatherStationRow& w) {
@@ -409,6 +433,33 @@ void HttpServer::start() {
                     json arr = json::array();
                     for (const auto& r : db.readings_between(req.matches[1], from, to, limit)) arr.push_back(to_json(r));
                     send(res, 200, arr);
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
+    // Download a DSN community-format .dat for a sensor over a date range.
+    srv.Get(R"(/api/v1/sensors/([^/]+)/dsn)",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                const std::string from = req.has_param("from") ? req.get_param_value("from") : "";
+                const std::string to = req.has_param("to") ? req.get_param_value("to") : "";
+                try {
+                    db::Database db(dbc);
+                    const std::string id = req.matches[1];
+                    const auto s = db.find_sensor(id);
+                    if (!s) { send_err(res, 404, "no such sensor"); return; }
+                    auto rows = db.readings_between(id, from, to, 500000);
+                    std::reverse(rows.begin(), rows.end());  // the .dat is oldest-first
+                    // Reuse a DSN export target's config (site_id + header) for this sensor, if any.
+                    std::string config;
+                    for (const auto& t : db.export_targets())
+                        if (t.target == "dsn" && t.sensor_id == id) { config = t.config; break; }
+                    exporter::ExportContext ctx;
+                    ctx.sensor = *s;
+                    ctx.readings = std::move(rows);
+                    ctx.from_ts = from;
+                    ctx.to_ts = to;
+                    const std::string content = exporter::format_dsn_dat(ctx, config);
+                    res.set_header("Content-Disposition", "attachment; filename=\"" +
+                                                              dsn_download_name(id, config, from, to) + "\"");
+                    res.set_content(content, "text/plain");
                 } catch (const std::exception& e) { send_err(res, 500, e.what()); }
             });
     srv.Get("/api/v1/events", [dbc](const httplib::Request& req, httplib::Response& res) {

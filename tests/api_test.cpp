@@ -103,6 +103,15 @@ int main() {
     r = cli.Patch("/api/v1/sensors/APITEST", auth, R"({"elevation_m":1234})", "application/json");
     CHECK(r && r->status == 200);
 
+    // DSN download: a community-format .dat with an attachment header.
+    r = cli.Get("/api/v1/sensors/APITEST/dsn");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) {
+        CHECK(r->body.rfind("# Community Standard Skyglow Data Format 1.0", 0) == 0);
+        CHECK(r->has_header("Content-Disposition"));
+    }
+    CHECK((r = cli.Get("/api/v1/sensors/NOPE_APITEST/dsn")) && r->status == 404);
+
     // ---- export targets (nested-secret masking + run/log) ----
     {
         const char* exbody =
