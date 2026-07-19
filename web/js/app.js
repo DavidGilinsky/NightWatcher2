@@ -5,7 +5,7 @@
 //                CRUD, readings query + graph, events, users, and database
 //                maintenance, all against the /api/v1 API.
 // Created:       2026-07-18
-// Last Modified: 2026-07-18
+// Last Modified: 2026-07-19
 // Version:       0.1.0
 // License:       GPL-3.0-or-later
 // ---------------------------------------------------------------------------
@@ -286,7 +286,7 @@ async function viewQuery() {
 
   const chart = el('div', { class: 'chart' });
   const caption = el('div', { class: 'muted', style: 'margin:.4rem 0' });
-  const tblWrap = el('div', { class: 'scroll', style: 'margin-top:1rem' });
+  const tblWrap = el('div', { class: 'tablebox', style: 'margin-top:1rem' });
 
   const toUtc = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   const load = async () => {

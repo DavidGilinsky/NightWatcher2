@@ -3,7 +3,7 @@
    File:          web/css/app.css
    Purpose:       Dark-theme styles for the NightWatcher2 web UI.
    Created:       2026-07-18
-   Last Modified: 2026-07-18
+   Last Modified: 2026-07-19
    Version:       0.1.0
    License:       GPL-3.0-or-later
    --------------------------------------------------------------------------- */
@@ -68,6 +68,9 @@ table.tbl th, table.tbl td { text-align: left; padding: .5rem .6rem; border-bott
 table.tbl th { color: var(--muted); font-weight: 500; }
 table.tbl tr:hover td { background: rgba(255,255,255,.02); }
 .scroll { overflow-x: auto; }
+/* A bounded, self-scrolling table container with a sticky header row. */
+.tablebox { max-height: 60vh; overflow: auto; border: 1px solid var(--border); border-radius: 10px; }
+.tablebox table.tbl th { position: sticky; top: 0; z-index: 1; background: var(--panel2); }
 
 /* Forms & buttons */
 button.btn, input, select {
