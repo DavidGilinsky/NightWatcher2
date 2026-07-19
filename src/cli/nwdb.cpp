@@ -249,9 +249,16 @@ int main(int argc, char** argv) {
                 return 2;
             }
             if (!no_probe) probe_and_fill(sf);
+            // New sensors start disabled (no database population) so they can be
+            // verified first; pass --status active to override.
+            if (!sf.status) sf.status = "inactive";
             db.upsert_sensor(pos[1], sf);
             std::cout << "sensor '" << pos[1] << "' saved.\n";
             if (const auto s = db.find_sensor(pos[1])) print_sensor(*s);
+            if (sf.status && *sf.status == "inactive") {
+                std::cout << "note: sensor is disabled \xe2\x80\x94 no readings will be stored. Verify it, then run:\n"
+                          << "      " << argv[0] << " set-sensor " << pos[1] << " --status active\n";
+            }
             return 0;
         } else if (cmd == "set-sensor") {
             if (pos.size() < 2) { std::cerr << "error: set-sensor requires an ID\n"; return 2; }

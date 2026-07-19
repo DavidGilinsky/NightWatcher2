@@ -101,11 +101,39 @@ int main() {
         const json j = json::parse(r->body);
         CHECK(j["name"] == "Api Test");
         CHECK(j["transport"] == "tcp");
+        CHECK(j["status"] == "inactive");  // new sensors start disabled (no DB population)
     }
 
     // Partial update.
     r = cli.Patch("/api/v1/sensors/APITEST", auth, R"({"elevation_m":1234})", "application/json");
     CHECK(r && r->status == 200);
+
+    // Non-persisting self-test: 127.0.0.1:1 is unreachable, so the connect check
+    // fails and overall ok is false, but the endpoint still returns structured
+    // results and writes nothing to the readings table.
+    r = cli.Post("/api/v1/sensors/APITEST/test", auth, "", "application/json");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) {
+        const json j = json::parse(r->body);
+        CHECK(j["ok"] == false);
+        CHECK(j["checks"].is_array() && !j["checks"].empty());
+        CHECK(j["checks"][0]["name"] == "connect");
+        CHECK(j["checks"][0]["ok"] == false);
+    }
+    r = cli.Get("/api/v1/sensors/APITEST/readings?limit=1");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) CHECK(json::parse(r->body).empty());  // test stored nothing
+
+    // Enable/disable flip the status (the daemon reload hook is a no-op in tests).
+    r = cli.Post("/api/v1/sensors/APITEST/enable", auth, "", "application/json");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) CHECK(json::parse(r->body)["status"] == "active");
+    r = cli.Post("/api/v1/sensors/APITEST/disable", auth, "", "application/json");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) CHECK(json::parse(r->body)["status"] == "inactive");
+    // Both require auth.
+    CHECK((r = cli.Post("/api/v1/sensors/APITEST/enable", "", "application/json")) && r->status == 401);
+    CHECK((r = cli.Post("/api/v1/sensors/APITEST/test", "", "application/json")) && r->status == 401);
 
     // DSN download: a community-format .dat with an attachment header.
     r = cli.Get("/api/v1/sensors/APITEST/dsn");

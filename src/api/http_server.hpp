@@ -40,6 +40,10 @@ struct ApiConfig {
     // daemon can restart the server on a changed bind. Empty = the endpoint is a
     // no-op (e.g. in tests).
     std::function<void()> on_apply;
+    // Invoked (after the response) when a sensor's participation in polling
+    // changes (enable/disable/delete), so the daemon can reload its device list
+    // and start/stop populating the database immediately. Empty = no-op.
+    std::function<void()> on_reload;
 };
 
 // Runs an httplib server on a background thread. Each request handler opens its

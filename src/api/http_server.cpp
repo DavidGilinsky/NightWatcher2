@@ -414,6 +414,7 @@ void HttpServer::start() {
     const std::string run_bind = impl_->cfg.bind;  // what this process actually bound
     const int run_port = impl_->cfg.port;
     const std::function<void()> on_apply = impl_->cfg.on_apply;
+    const std::function<void()> on_reload = impl_->cfg.on_reload;
 
     if (!impl_->cfg.web_root.empty()) {
         srv.set_mount_point("/", impl_->cfg.web_root);
@@ -634,6 +635,10 @@ void HttpServer::start() {
         if (!body.contains("id")) { send_err(res, 400, "missing 'id'"); return; }
         const std::string id = body["id"].get<std::string>();
         db::SensorFields f = sensor_fields_from_json(body);
+        // New sensors start disabled (not polled, no rows written) so they can be
+        // verified before database population is enabled. An explicit status in
+        // the request still wins.
+        if (!f.status) f.status = "inactive";
         if (!f.transport || !f.address) {
             send_err(res, 400, "missing transport/address (or 'tcp')");
             return;
@@ -675,14 +680,16 @@ void HttpServer::start() {
                        send(res, 200, json{{"deleted", n}});
                    } catch (const std::exception& e) { send_err(res, 500, e.what()); }
                });
-    srv.Delete(R"(/api/v1/sensors/([^/]+))", [dbc, token](const httplib::Request& req, httplib::Response& res) {
-        if (!require_auth(req, res, token, dbc, true)) return;
-        try {
-            db::Database db(dbc);
-            db.remove_sensor(req.matches[1]);
-            send(res, 200, json{{"deleted", std::string(req.matches[1])}});
-        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
-    });
+    srv.Delete(R"(/api/v1/sensors/([^/]+))",
+               [dbc, token, on_reload](const httplib::Request& req, httplib::Response& res) {
+                   if (!require_auth(req, res, token, dbc, true)) return;
+                   try {
+                       db::Database db(dbc);
+                       db.remove_sensor(req.matches[1]);
+                       send(res, 200, json{{"deleted", std::string(req.matches[1])}});
+                   } catch (const std::exception& e) { send_err(res, 500, e.what()); return; }
+                   if (on_reload) on_reload();  // stop polling a now-deleted sensor
+               });
     srv.Post(R"(/api/v1/sensors/([^/]+)/poll)",
              [dbc, token](const httplib::Request& req, httplib::Response& res) {
                  if (!require_auth(req, res, token, dbc, true)) return;
@@ -706,6 +713,108 @@ void HttpServer::start() {
                                {"quality", quality},
                                {"raw", r.raw}});
                  } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+             });
+    // Non-persisting self-test: exercise every required device function
+    // (connect -> identify/ix -> reading/rx -> calibration/cx) and report each
+    // result WITHOUT writing to the readings table. This lets an operator verify
+    // a sensor works before enabling database population from it.
+    srv.Post(R"(/api/v1/sensors/([^/]+)/test)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 std::optional<db::SensorRow> s;
+                 try {
+                     db::Database db(dbc);
+                     s = db.find_sensor(req.matches[1]);
+                 } catch (const std::exception& e) { send_err(res, 500, e.what()); return; }
+                 if (!s) { send_err(res, 404, "no such sensor"); return; }
+                 if (s->transport != "tcp") { send_err(res, 400, "only tcp transport supported"); return; }
+
+                 std::string host;
+                 uint16_t port;
+                 split_endpoint(s->address, host, port);
+
+                 json checks = json::array();
+                 bool overall = true;
+
+                 // 1) Connect (TcpTransport connects in its constructor).
+                 std::unique_ptr<sqm::SqmDevice> dev;
+                 try {
+                     auto t = std::make_unique<sqm::TcpTransport>(host, port, 5000);
+                     dev = std::make_unique<sqm::SqmDevice>(std::move(t));
+                     checks.push_back({{"name", "connect"}, {"ok", true},
+                                       {"detail", host + ":" + std::to_string(port)}});
+                 } catch (const std::exception& e) {
+                     checks.push_back({{"name", "connect"}, {"ok", false}, {"detail", e.what()}});
+                     send(res, 200,
+                          json{{"id", s->id}, {"address", s->address}, {"ok", false}, {"checks", checks}});
+                     return;  // nothing else is possible without a connection
+                 }
+
+                 // 2) Identify (ix): confirm it speaks the SQM protocol; flag a
+                 //    serial mismatch against the registered unit if we have one.
+                 try {
+                     const sqm::UnitInfo u = dev->info();
+                     json c{{"name", "identify"}, {"ok", true}, {"protocol", u.protocol},
+                            {"model", u.model},   {"feature", u.feature}, {"serial", u.serial},
+                            {"raw", u.raw}};
+                     if (!s->serial_number.empty()) c["serial_match"] = (u.serial == s->serial_number);
+                     checks.push_back(c);
+                 } catch (const std::exception& e) {
+                     checks.push_back({{"name", "identify"}, {"ok", false}, {"detail", e.what()}});
+                     overall = false;
+                 }
+
+                 // 3) Reading (rx): a live measurement + quality (not persisted).
+                 try {
+                     const sqm::Reading r = dev->read_averaged();
+                     const std::string quality = (r.mag_arcsec2 <= 0.0) ? "saturated" : "ok";
+                     checks.push_back({{"name", "reading"}, {"ok", true}, {"mag_arcsec2", r.mag_arcsec2},
+                                       {"freq_hz", r.freq_hz}, {"temp_c", r.temp_c},
+                                       {"quality", quality}, {"raw", r.raw}});
+                 } catch (const std::exception& e) {
+                     checks.push_back({{"name", "reading"}, {"ok", false}, {"detail", e.what()}});
+                     overall = false;
+                 }
+
+                 // 4) Calibration (cx): confirm the cal read-out responds.
+                 try {
+                     const sqm::Calibration cal = dev->calibration();
+                     checks.push_back({{"name", "calibration"}, {"ok", true},
+                                       {"light_cal_offset", cal.light_cal_offset},
+                                       {"dark_cal_period_s", cal.dark_cal_period_s},
+                                       {"temp_light_c", cal.temp_light_c},
+                                       {"sensor_offset", cal.sensor_offset},
+                                       {"temp_dark_c", cal.temp_dark_c}, {"raw", cal.raw}});
+                 } catch (const std::exception& e) {
+                     checks.push_back({{"name", "calibration"}, {"ok", false}, {"detail", e.what()}});
+                     overall = false;
+                 }
+
+                 send(res, 200,
+                      json{{"id", s->id}, {"address", s->address}, {"ok", overall}, {"checks", checks}});
+             });
+    // Enable/disable database population for a sensor: flip status active<->
+    // inactive and ask the daemon to reload so the change takes effect at once.
+    const auto set_status = [dbc, token, on_reload](const httplib::Request& req,
+                                                    httplib::Response& res, const char* status) {
+        if (!require_auth(req, res, token, dbc, true)) return;
+        try {
+            db::Database db(dbc);
+            db::SensorFields f;
+            f.status = status;
+            if (!db.update_sensor(req.matches[1], f)) { send_err(res, 404, "no such sensor"); return; }
+            const auto s = db.find_sensor(req.matches[1]);
+            send(res, 200, s ? to_json(*s) : json::object());
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); return; }
+        if (on_reload) on_reload();  // daemon re-reads active_sensors() and starts/stops polling
+    };
+    srv.Post(R"(/api/v1/sensors/([^/]+)/enable)",
+             [set_status](const httplib::Request& req, httplib::Response& res) {
+                 set_status(req, res, "active");
+             });
+    srv.Post(R"(/api/v1/sensors/([^/]+)/disable)",
+             [set_status](const httplib::Request& req, httplib::Response& res) {
+                 set_status(req, res, "inactive");
              });
     srv.Post("/api/v1/weather-stations", [dbc, token](const httplib::Request& req, httplib::Response& res) {
         if (!require_auth(req, res, token, dbc, true)) return;

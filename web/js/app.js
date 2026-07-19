@@ -147,13 +147,16 @@ async function viewDashboard() {
               el('span', { class: 'muted' }, latest.ts_utc + ' UTC')))
           : el('div', { class: 'muted' }, 'no readings yet'),
         isAdmin()
-          ? el('div', { style: 'margin-top:.7rem' },
-            el('button', {
-              class: 'btn sm', onclick: async () => {
-                try { await api('POST', `/sensors/${encodeURIComponent(s.id)}/poll`); renderView(); }
-                catch (e) { alert(e.message); }
-              }
-            }, 'Poll now'))
+          ? el('div', { class: 'row', style: 'margin-top:.7rem' },
+            el('button', { class: 'btn ghost sm', type: 'button', onclick: () => sensorTest(s) }, 'Test'),
+            s.status === 'active'
+              ? el('button', {
+                  class: 'btn sm', type: 'button', onclick: async () => {
+                    try { await api('POST', `/sensors/${encodeURIComponent(s.id)}/poll`); renderView(); }
+                    catch (e) { alert(e.message); }
+                  }
+                }, 'Poll now')
+              : el('button', { class: 'btn sm', type: 'button', onclick: () => setSensorEnabled(s, true) }, 'Enable'))
           : null));
     }
     frag.append(grid);
@@ -190,6 +193,73 @@ async function viewDashboard() {
   return frag;
 }
 
+// ---- lightweight modal overlay -------------------------------------------
+function modal(title, bodyNode) {
+  const overlay = el('div', { class: 'modal-overlay' });
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  function close() { overlay.remove(); document.removeEventListener('keydown', onKey); }
+  const card = el('div', { class: 'modal-card' },
+    el('div', { class: 'modal-head' },
+      el('h3', { style: 'margin:0' }, title),
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: close }, '✕')),
+    bodyNode);
+  overlay.append(card);
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  document.addEventListener('keydown', onKey);
+  document.body.append(overlay);
+  return { overlay, close };
+}
+
+// Render one self-test check as a labelled OK/FAIL row with its values.
+function renderCheck(c) {
+  const labels = { connect: 'Connectivity', identify: 'Identity (ix)', reading: 'Reading (rx)', calibration: 'Calibration (cx)' };
+  let detail = c.detail || '';
+  if (c.ok && c.name === 'identify') {
+    detail = `serial ${c.serial}, protocol ${c.protocol}, feature ${c.feature}`;
+    if (c.serial_match === false) detail += ' — ⚠ does not match the registered serial';
+  } else if (c.ok && c.name === 'reading') {
+    detail = `${fmtMag(c.mag_arcsec2)} mag/arcsec², ${fmtNum(c.temp_c)} °C, quality ${c.quality}`;
+  } else if (c.ok && c.name === 'calibration') {
+    detail = `light offset ${fmtMag(c.light_cal_offset)}, sensor offset ${fmtMag(c.sensor_offset)} mag/arcsec²`;
+  }
+  return el('div', { class: 'check' },
+    el('div', { class: 'row', style: 'justify-content:space-between' },
+      el('b', {}, labels[c.name] || c.name),
+      el('span', { class: 'pill ' + (c.ok ? 'ok' : 'suspect') }, c.ok ? 'OK' : 'FAIL')),
+    detail ? el('div', { class: 'muted', style: 'font-size:.85rem;margin-top:.15rem' }, detail) : null);
+}
+
+// Run the non-persisting self-test for a sensor and show results in a modal.
+async function sensorTest(s) {
+  const body = el('div');
+  body.append(el('div', { class: 'muted', style: 'margin-bottom:.6rem' },
+    `Live test of ${s.id} at ${s.address}. Nothing is written to the database.`));
+  const status = el('div', {}, msg('warn', 'Running self-test…'));
+  body.append(status);
+  const results = el('div', { class: 'checks' });
+  body.append(results);
+  modal('Verify ' + s.id, body);
+  try {
+    const r = await api('POST', `/sensors/${encodeURIComponent(s.id)}/test`);
+    status.innerHTML = '';
+    status.append(msg(r.ok ? 'ok' : 'err', r.ok
+      ? '✓ All checks passed — safe to enable database population.'
+      : '✗ One or more checks failed (see below).'));
+    for (const c of (r.checks || [])) results.append(renderCheck(c));
+  } catch (e) {
+    status.innerHTML = '';
+    status.append(msg('err', 'Test could not run: ' + e.message));
+  }
+}
+
+// Enable/disable database population for a sensor (daemon reloads immediately).
+async function setSensorEnabled(s, enable) {
+  try {
+    await api('POST', `/sensors/${encodeURIComponent(s.id)}/${enable ? 'enable' : 'disable'}`);
+    renderView();
+  } catch (e) { alert(e.message); }
+}
+
 function sensorForm(s) {
   const editing = !!s;
   const f = el('form', { class: 'form card', style: 'margin-bottom:1rem' });
@@ -205,10 +275,13 @@ function sensorForm(s) {
   g.append(field('Timezone', 'timezone', editing ? s.timezone : ''));
   g.append(field('Poll interval (s)', 'poll_interval_s', editing ? s.poll_interval_s : 300, 'number', '1'));
   g.append(field('Model', 'model', editing ? s.model : ''));
+  const defaultStatus = editing ? s.status : 'inactive';
   const statusSel = el('select', { name: 'status' },
-    ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: editing && s.status === o ? 'selected' : null }, o)));
+    ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: o === defaultStatus ? 'selected' : null }, o)));
   g.append(el('label', {}, 'Status', statusSel));
   f.append(g);
+  if (!editing) f.append(el('div', { class: 'muted', style: 'font-size:.82rem' },
+    'New sensors start disabled — nothing is written to the database. Add it, click Test to verify, then Enable database population.'));
   const err = el('div');
   f.append(err);
   f.append(el('div', { class: 'row' },
@@ -248,6 +321,10 @@ async function viewSensors() {
   ];
   if (isAdmin()) cols.push({
     label: '', render: s => el('div', { class: 'row' },
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: () => sensorTest(s) }, 'Test'),
+      s.status === 'active'
+        ? el('button', { class: 'btn ghost sm', type: 'button', onclick: () => setSensorEnabled(s, false) }, 'Disable')
+        : el('button', { class: 'btn sm', type: 'button', onclick: () => setSensorEnabled(s, true) }, 'Enable'),
       el('button', { class: 'btn ghost sm', onclick: () => { editingSensor = s; renderView(); } }, 'Edit'),
       el('button', {
         class: 'btn danger sm', onclick: async () => {
