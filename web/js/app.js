@@ -41,8 +41,11 @@ function table(cols, rows) {
     el('tbody', {}, ...rows.map(r =>
       el('tr', {}, ...cols.map(c => el('td', {}, c.render ? c.render(r) : r[c.key]))))));
 }
-function field(label, name, value, type) {
-  return el('label', {}, label, el('input', { name, type: type || 'text', value: value == null ? '' : value }));
+function field(label, name, value, type, step) {
+  const attrs = { name, type: type || 'text', value: value == null ? '' : value };
+  // Number inputs default to step="any" so decimals (e.g. lat/lon) are accepted.
+  if (type === 'number') attrs.step = step || 'any';
+  return el('label', {}, label, el('input', attrs));
 }
 
 // ---- API -------------------------------------------------------------------
@@ -141,7 +144,7 @@ function sensorForm(s) {
   g.append(field('Longitude', 'longitude', editing ? s.longitude : '', 'number'));
   g.append(field('Elevation (m)', 'elevation_m', editing ? s.elevation_m : '', 'number'));
   g.append(field('Timezone', 'timezone', editing ? s.timezone : ''));
-  g.append(field('Poll interval (s)', 'poll_interval_s', editing ? s.poll_interval_s : 300, 'number'));
+  g.append(field('Poll interval (s)', 'poll_interval_s', editing ? s.poll_interval_s : 300, 'number', '1'));
   g.append(field('Model', 'model', editing ? s.model : ''));
   const statusSel = el('select', { name: 'status' },
     ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: editing && s.status === o ? 'selected' : null }, o)));
