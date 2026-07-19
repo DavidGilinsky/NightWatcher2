@@ -192,13 +192,26 @@ int main(int argc, char** argv) {
             srv->start();  // throws on bind failure
             return srv;
         };
-        try {
-            api = make(bind);
-        } catch (const std::exception& e) {
-            log_error("API failed to start on " + bind + ":" + std::to_string(port) + ": " + e.what());
-            // Anti-lockout: fall back to localhost so the UI stays reachable to fix the setting.
+        // Try the configured bind, retrying briefly: on a rebind the previous
+        // listener may still be releasing the port for a moment.
+        bool bound = false;
+        for (int i = 0; i < 10 && !bound; ++i) {
+            try {
+                api = make(bind);
+                bound = true;
+            } catch (const std::exception& e) {
+                if (i == 0)
+                    log_warn(bind + ":" + std::to_string(port) + " not bindable yet (" + e.what() +
+                             "); retrying");
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            }
+        }
+        // Anti-lockout: only after retries fail, fall back to localhost so the
+        // UI stays reachable to fix the setting.
+        if (!bound) {
+            log_error("could not bind API to " + bind + ":" + std::to_string(port) + " after retries");
             if (bind != "127.0.0.1" && bind != "localhost") {
-                log_warn("retrying API on 127.0.0.1:" + std::to_string(port) +
+                log_warn("falling back to 127.0.0.1:" + std::to_string(port) +
                          " so the web UI stays reachable");
                 try {
                     api = make("127.0.0.1");

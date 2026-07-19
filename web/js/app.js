@@ -790,9 +790,24 @@ async function viewServer() {
     try {
       await api('PUT', '/settings', { bind: bindInput.value.trim(), port });
       const r = await api('POST', '/settings/apply', {});
-      out.append(msg('warn', `Applying: the server is restarting on ${r.configured.bind}:${r.configured.port}. ` +
-        'If the address changed, reconnect there. Reloading this page…'));
-      setTimeout(() => location.reload(), 2500);
+      const cb = r.configured.bind, cp = r.configured.port;
+      out.append(msg('warn', `Server restarting on ${cb}:${cp} — reconnecting…`));
+      // Poll the current origin until the server is back, then reload. If the
+      // bind moved off the address this page is on, it can't reconnect here.
+      let tries = 0;
+      const poll = async () => {
+        tries += 1;
+        try {
+          const res = await fetch('/api/v1/version', { cache: 'no-store' });
+          if (res.ok) { location.reload(); return; }
+        } catch (_) { /* still restarting */ }
+        if (tries < 25) { setTimeout(poll, 600); return; }
+        out.innerHTML = '';
+        const host = (cb === '0.0.0.0' || cb === '::') ? location.hostname : cb;
+        out.append(msg('warn', `The server is now on ${cb}:${cp}. This page couldn’t reconnect ` +
+          `automatically — open http://${host}:${cp}/`));
+      };
+      setTimeout(poll, 1200);
     } catch (ex) { out.append(msg('err', ex.message)); }
   };
   f.append(el('div', { class: 'row', style: 'margin-top:.6rem' },
