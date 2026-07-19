@@ -801,6 +801,25 @@ long long Database::restore_sql(std::istream& in) {
     return n;
 }
 
+std::optional<std::string> Database::get_setting(const std::string& name) {
+    std::ostringstream q;
+    q << "SELECT value FROM settings WHERE name='" << esc(name) << "' LIMIT 1";
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("get_setting: ") + mysql_error(impl_->conn));
+    std::optional<std::string> out;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) out = row[0] ? row[0] : "";
+    mysql_free_result(res);
+    return out;
+}
+
+void Database::set_setting(const std::string& name, const std::string& value) {
+    std::ostringstream q;
+    q << "INSERT INTO settings (name, value) VALUES ('" << esc(name) << "', '" << esc(value)
+      << "') ON DUPLICATE KEY UPDATE value=VALUES(value)";
+    exec(q.str());
+}
+
 std::vector<TableCount> Database::schema_status() {
     std::set<std::string> present;
     exec("SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()");
@@ -816,7 +835,8 @@ std::vector<TableCount> Database::schema_status() {
                                          "config_log",       "events",
                                          "weather_stations", "weather_readings",
                                          "users",            "sessions",
-                                         "export_targets",   "export_log"};
+                                         "export_targets",   "export_log",
+                                         "settings"};
     std::vector<TableCount> out;
     for (const char* t : kKnown) {
         TableCount tc;

@@ -264,9 +264,16 @@ int main() {
             dbh.run_schema_script("DROP TABLE IF EXISTS nwtest_backup;");
         }
 
-        // Schema status reports the ten known tables, sensors present.
+        // Settings key/value round-trip (upsert overwrites; missing -> nullopt).
+        dbh.set_setting("api_bind", "0.0.0.0");
+        CHECK(dbh.get_setting("api_bind").value_or("") == "0.0.0.0");
+        dbh.set_setting("api_bind", "127.0.0.1");
+        CHECK(dbh.get_setting("api_bind").value_or("") == "127.0.0.1");
+        CHECK(!dbh.get_setting("nwtest_missing_setting").has_value());
+
+        // Schema status reports the eleven known tables, sensors present.
         const auto st = dbh.schema_status();
-        CHECK(st.size() == 10);
+        CHECK(st.size() == 11);
         bool sensors_present = false;
         for (const auto& tc : st) {
             if (tc.table == "sensors") sensors_present = tc.present;

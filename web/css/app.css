@@ -98,6 +98,7 @@ form.form label { display: grid; gap: .2rem; font-size: .85rem; color: var(--mut
 .msg { padding: .5rem .7rem; border-radius: 8px; margin: .5rem 0; font-size: .88rem; }
 .msg.err { background: rgba(255,92,108,.12); color: #ffb3ba; border: 1px solid rgba(255,92,108,.3); }
 .msg.ok { background: rgba(62,207,142,.12); color: #a7ecca; border: 1px solid rgba(62,207,142,.3); }
+.msg.warn { background: rgba(245,196,81,.12); color: #f3d488; border: 1px solid rgba(245,196,81,.3); }
 .banner { background: rgba(245,196,81,.12); color: #f6dd9e; border: 1px solid rgba(245,196,81,.3);
   padding: .5rem .8rem; border-radius: 8px; margin-bottom: 1rem; }
 

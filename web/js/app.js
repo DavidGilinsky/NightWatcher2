@@ -748,6 +748,61 @@ async function viewExports() {
   return frag;
 }
 
+async function viewServer() {
+  const frag = document.createDocumentFragment();
+  frag.append(el('h2', {}, 'Web server'));
+  let s;
+  try { s = await api('GET', '/settings'); }
+  catch (e) { frag.append(msg('err', e.message)); return frag; }
+  const cfg = s.configured, run = s.running;
+
+  frag.append(el('p', { class: 'muted', style: 'margin-bottom:.6rem' },
+    `Currently listening on ${run.bind}:${run.port}.`));
+  if (s.restart_required) {
+    frag.append(msg('warn', `Pending change: configured ${cfg.bind}:${cfg.port}, still running on ${run.bind}:${run.port}. Restart the daemon to apply.`));
+  }
+
+  const f = el('form', { class: 'form card', style: 'margin-bottom:1rem' });
+  f.append(el('h3', {}, 'Listen address'));
+  const g = el('div', { class: 'form-grid' });
+  const bindInput = el('input', { name: 'bind', type: 'text', value: cfg.bind || '' });
+  g.append(el('label', {}, 'Bind address', bindInput));
+  g.append(field('Port', 'port', cfg.port, 'number', '1'));
+  f.append(g);
+  f.append(el('div', { class: 'muted', style: 'font-size:.82rem;margin-top:.3rem' },
+    '127.0.0.1 = localhost only  ·  0.0.0.0 = all interfaces  ·  or a specific interface IP.'));
+
+  const warn = el('div', { style: 'margin-top:.5rem' });
+  const updateWarn = () => {
+    const b = bindInput.value.trim();
+    const local = b === '' || b === '127.0.0.1' || b === 'localhost' || b === '::1';
+    warn.innerHTML = '';
+    if (!local) warn.append(msg('warn',
+      '⚠ Exposing the server beyond localhost makes the UI and API reachable on your network. Read endpoints are unauthenticated, so anyone who can reach this host can view your sensor data and configuration.'));
+  };
+  bindInput.addEventListener('input', updateWarn); updateWarn();
+  f.append(warn);
+
+  const out = el('div'); f.append(out);
+  f.append(el('div', { class: 'row', style: 'margin-top:.6rem' },
+    el('button', { class: 'btn', type: 'submit' }, 'Save')));
+  f.addEventListener('submit', async e => {
+    e.preventDefault();
+    out.innerHTML = '';
+    try {
+      const r = await api('PUT', '/settings', {
+        bind: bindInput.value.trim(),
+        port: Number(f.querySelector('input[name="port"]').value),
+      });
+      out.append(r.restart_required
+        ? msg('warn', `Saved. Restart the daemon to start listening on ${r.configured.bind}:${r.configured.port}.`)
+        : msg('ok', 'Saved (unchanged from the running configuration).'));
+    } catch (ex) { out.append(msg('err', ex.message)); }
+  });
+  frag.append(f);
+  return frag;
+}
+
 const VIEWS = {
   dashboard: { label: 'Dashboard', render: viewDashboard },
   query: { label: 'Query & graph', render: viewQuery },
@@ -757,6 +812,7 @@ const VIEWS = {
   events: { label: 'Events', render: viewEvents },
   users: { label: 'Users', admin: true, render: viewUsers },
   database: { label: 'Database', admin: true, render: viewDatabase },
+  server: { label: 'Server', admin: true, render: viewServer },
 };
 
 function currentViewFromHash() {

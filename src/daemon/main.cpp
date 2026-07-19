@@ -156,19 +156,50 @@ int main(int argc, char** argv) {
     // request, so it keeps running across sensor-list reloads.
     std::unique_ptr<HttpServer> api;
     if (cfg.api_port > 0) {
-        ApiConfig api_cfg;
-        api_cfg.bind = cfg.api_bind;
-        api_cfg.port = cfg.api_port;
-        if (const char* tok = std::getenv("NW_API_TOKEN")) api_cfg.token = tok;
-        api_cfg.schema_file = cfg.schema_file;
-        api_cfg.web_root = cfg.web_root;
-        api_cfg.db = db_cfg;
-        api = std::make_unique<HttpServer>(std::move(api_cfg));
+        // Effective bind/port: config-file defaults, overridden by DB settings
+        // (which the web UI edits). Applied here at startup.
+        std::string bind = cfg.api_bind;
+        int port = cfg.api_port;
         try {
-            api->start();
+            db::Database sdb(db_cfg);
+            if (auto v = sdb.get_setting("api_bind"); v && !v->empty()) bind = *v;
+            if (auto v = sdb.get_setting("api_port"); v && !v->empty()) {
+                const int p = std::atoi(v->c_str());
+                if (p > 0 && p < 65536) port = p;
+            }
+        } catch (const std::exception&) { /* settings unavailable; use config-file values */ }
+
+        std::string tok;
+        if (const char* t = std::getenv("NW_API_TOKEN")) tok = t;
+        const auto start_api = [&](const std::string& b) {
+            ApiConfig ac;
+            ac.bind = b;
+            ac.port = port;
+            ac.token = tok;
+            ac.schema_file = cfg.schema_file;
+            ac.web_root = cfg.web_root;
+            ac.db = db_cfg;
+            auto srv = std::make_unique<HttpServer>(std::move(ac));
+            srv->start();  // throws on bind failure
+            return srv;
+        };
+        try {
+            api = start_api(bind);
         } catch (const std::exception& e) {
-            log_error(std::string("API failed to start: ") + e.what());
-            api.reset();
+            log_error("API failed to start on " + bind + ":" + std::to_string(port) + ": " + e.what());
+            // Anti-lockout: fall back to localhost so the UI stays reachable to fix the setting.
+            if (bind != "127.0.0.1" && bind != "localhost") {
+                log_warn("retrying API on 127.0.0.1:" + std::to_string(port) +
+                         " so the web UI stays reachable");
+                try {
+                    api = start_api("127.0.0.1");
+                } catch (const std::exception& e2) {
+                    log_error(std::string("localhost fallback also failed: ") + e2.what());
+                    api.reset();
+                }
+            } else {
+                api.reset();
+            }
         }
     }
 

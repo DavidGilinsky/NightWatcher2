@@ -222,6 +222,16 @@ CREATE TABLE IF NOT EXISTS export_log (
     KEY idx_export_log_target_ts (target_id, ts_utc)
 ) ENGINE=InnoDB;
 
+-- Runtime settings editable from the web UI (key/value), e.g. the API bind
+-- address and port. The daemon reads these at startup (overriding the config
+-- file) and applies them on the next restart.
+CREATE TABLE IF NOT EXISTS settings (
+    name       VARCHAR(64) NOT NULL,
+    value      TEXT        NULL,
+    updated_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (name)
+) ENGINE=InnoDB;
+
 -- Migrations for existing databases (idempotent; MariaDB IF NOT EXISTS).
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NULL;
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS config   TEXT        NULL;

@@ -199,6 +199,28 @@ int main() {
     CHECK(r && r->status == 201);
     r = cli.Delete("/api/v1/sensors/APITEST2", sauth);
     CHECK(r && r->status == 200);
+
+    // Server settings: GET is admin-only; PUT validates and persists.
+    CHECK((r = cli.Get("/api/v1/settings")) && r->status == 401);  // no auth
+    r = cli.Get("/api/v1/settings", sauth);
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) {
+        const json j = json::parse(r->body);
+        CHECK(j.contains("running") && j.contains("configured"));
+    }
+    CHECK((r = cli.Put("/api/v1/settings", sauth, R"({"bind":"bad addr!"})", "application/json")) &&
+          r->status == 400);
+    CHECK((r = cli.Put("/api/v1/settings", sauth, R"({"port":99999})", "application/json")) &&
+          r->status == 400);
+    // A valid change persists (127.0.0.1:8080 = the daemon's normal values, so this is safe).
+    r = cli.Put("/api/v1/settings", sauth, R"({"bind":"127.0.0.1","port":8080})", "application/json");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) {
+        const json j = json::parse(r->body);
+        CHECK(j["configured"]["bind"] == "127.0.0.1");
+        CHECK(j["configured"]["port"] == 8080);
+    }
+
     // Logout invalidates the session.
     r = cli.Post("/api/v1/logout", sauth, "", "application/json");
     CHECK(r && r->status == 200);

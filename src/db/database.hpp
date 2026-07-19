@@ -303,6 +303,10 @@ public:
     // run. DESTRUCTIVE: DROP/CREATE/INSERT replace the current contents.
     long long restore_sql(std::istream& in);
 
+    // --- Runtime settings (key/value; e.g. api_bind, api_port) ---
+    std::optional<std::string> get_setting(const std::string& name);
+    void set_setting(const std::string& name, const std::string& value);
+
     // --- Schema ---
     std::vector<TableCount> schema_status();          // known tables + row counts
     void run_schema_script(const std::string& sql);   // execute a multi-statement SQL script

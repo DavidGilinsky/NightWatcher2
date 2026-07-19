@@ -93,6 +93,17 @@ bool is_secret_key(const std::string& k) {
            lk.find("password") != std::string::npos || lk.find("token") != std::string::npos;
 }
 
+// A syntactically acceptable listen address (IPv4/IPv6/hostname, or 0.0.0.0/::).
+// A valid-but-unbindable value is caught at startup, which falls back to localhost.
+bool valid_bind(const std::string& b) {
+    if (b.empty() || b.size() > 64) return false;
+    for (const char c : b)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == ':' || c == '-' ||
+              c == '_'))
+            return false;
+    return true;
+}
+
 // Recursively redact secret string values (matched by key name), descending into
 // nested objects (e.g. an export target's config.auth.private_key).
 json mask_config_json(const json& c) {
@@ -386,6 +397,8 @@ void HttpServer::start() {
     const db::DbConfig dbc = impl_->cfg.db;
     const std::string token = impl_->cfg.token;
     const std::string schema_file = impl_->cfg.schema_file;
+    const std::string run_bind = impl_->cfg.bind;  // what this process actually bound
+    const int run_port = impl_->cfg.port;
 
     if (!impl_->cfg.web_root.empty()) {
         srv.set_mount_point("/", impl_->cfg.web_root);
@@ -407,6 +420,49 @@ void HttpServer::start() {
         }
         send(res, 200, j);
     });
+
+    // Web-server settings (bind/port). Admin-only. Changes are stored and applied
+    // when the daemon restarts; the response reports both the running and the
+    // configured values so the UI can prompt for a restart.
+    const auto settings_json = [run_bind, run_port](db::Database& db) {
+        std::string cbind = run_bind;
+        int cport = run_port;
+        if (auto v = db.get_setting("api_bind"); v && !v->empty()) cbind = *v;
+        if (auto v = db.get_setting("api_port"); v && !v->empty()) cport = std::atoi(v->c_str());
+        return json{{"running", {{"bind", run_bind}, {"port", run_port}}},
+                    {"configured", {{"bind", cbind}, {"port", cport}}},
+                    {"restart_required", (cbind != run_bind || cport != run_port)}};
+    };
+    srv.Get("/api/v1/settings",
+            [dbc, token, settings_json](const httplib::Request& req, httplib::Response& res) {
+                if (!require_auth(req, res, token, dbc, true)) return;
+                try {
+                    db::Database db(dbc);
+                    send(res, 200, settings_json(db));
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
+    srv.Put("/api/v1/settings",
+            [dbc, token, settings_json](const httplib::Request& req, httplib::Response& res) {
+                if (!require_auth(req, res, token, dbc, true)) return;
+                json body;
+                try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+                try {
+                    db::Database db(dbc);
+                    if (body.contains("bind") && body["bind"].is_string()) {
+                        const std::string b = body["bind"].get<std::string>();
+                        if (!valid_bind(b)) { send_err(res, 400, "invalid bind address"); return; }
+                        db.set_setting("api_bind", b);
+                    }
+                    if (body.contains("port")) {
+                        int p = 0;
+                        if (body["port"].is_number()) p = body["port"].get<int>();
+                        else if (body["port"].is_string()) p = std::atoi(body["port"].get<std::string>().c_str());
+                        if (p < 1 || p > 65535) { send_err(res, 400, "port out of range (1-65535)"); return; }
+                        db.set_setting("api_port", std::to_string(p));
+                    }
+                    send(res, 200, settings_json(db));
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
     srv.Get("/api/v1/sensors", [dbc](const httplib::Request&, httplib::Response& res) {
         try {
             db::Database db(dbc);
