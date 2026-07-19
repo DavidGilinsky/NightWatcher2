@@ -11,6 +11,7 @@
 #pragma once
 
 #include <cstdint>
+#include <iosfwd>
 #include <memory>
 #include <optional>
 #include <string>
@@ -293,6 +294,14 @@ public:
     // Delete readings for a sensor with ts_utc < the given timestamp; returns the
     // number of rows removed.
     long long delete_readings_before(const std::string& sensor_id, const std::string& ts_utc);
+
+    // --- Backup / restore (logical SQL dump of every table) ---
+    // Stream a self-contained SQL script (schema + data for all tables) to `out`,
+    // for moving the database to another host. One statement per line.
+    void dump_sql(std::ostream& out);
+    // Execute a backup script read from `in`. Returns the number of statements
+    // run. DESTRUCTIVE: DROP/CREATE/INSERT replace the current contents.
+    long long restore_sql(std::istream& in);
 
     // --- Schema ---
     std::vector<TableCount> schema_status();          // known tables + row counts

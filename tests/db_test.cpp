@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 
@@ -240,6 +241,28 @@ int main() {
         }
         dbh.remove_export_target("EXTEST");
         CHECK(!dbh.find_export_target("EXTEST").has_value());
+
+        // Backup: the dump carries the schema + the test sensor's data.
+        {
+            std::ostringstream dump;
+            dbh.dump_sql(dump);
+            const std::string s = dump.str();
+            CHECK(s.find("SET FOREIGN_KEY_CHECKS=0") != std::string::npos);
+            CHECK(s.find("CREATE TABLE `sensors`") != std::string::npos);
+            CHECK(s.find("INSERT INTO `sensors`") != std::string::npos);
+            CHECK(s.find(kId) != std::string::npos);  // NWTEST present in the backup
+
+            // Restore round-trips a throwaway table (incl. a value with a ';').
+            dbh.run_schema_script("DROP TABLE IF EXISTS nwtest_backup; "
+                                  "CREATE TABLE nwtest_backup (id INT, note VARCHAR(64));");
+            std::istringstream rin("-- comment\nINSERT INTO nwtest_backup VALUES (42,'he;llo');\n");
+            CHECK(dbh.restore_sql(rin) == 1);
+            std::ostringstream chk;
+            dbh.dump_sql(chk);
+            CHECK(chk.str().find("nwtest_backup") != std::string::npos);
+            CHECK(chk.str().find("he;llo") != std::string::npos);  // survived restore + re-dump
+            dbh.run_schema_script("DROP TABLE IF EXISTS nwtest_backup;");
+        }
 
         // Schema status reports the ten known tables, sensors present.
         const auto st = dbh.schema_status();

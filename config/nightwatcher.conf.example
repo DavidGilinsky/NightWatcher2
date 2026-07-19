@@ -16,6 +16,10 @@
 # This file only configures the daemon itself: the database connection and API port.
 
 [database]
+# host may be localhost, a remote hostname, or an IP. It may also carry a
+# ":PORT" suffix (e.g. host = db.example.com:3307), in which case it overrides
+# the separate `port` below. This is how you point the daemon at a MySQL/MariaDB
+# server on another host.
 host = 127.0.0.1
 port = 3306
 name = nightwatcher

@@ -13,7 +13,10 @@
 
 #include <mysql.h>
 
+#include <algorithm>
 #include <cstdlib>
+#include <istream>
+#include <ostream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -41,15 +44,26 @@ Database::Database(const DbConfig& cfg) : impl_(std::make_unique<Impl>()) {
     if (impl_->conn == nullptr) {
         throw std::runtime_error("mysql_init failed");
     }
-    if (mysql_real_connect(impl_->conn, cfg.host.c_str(), cfg.user.c_str(),
-                           cfg.password.c_str(), cfg.database.c_str(), cfg.port, nullptr,
-                           0) == nullptr) {
+    // Accept a convenience "host:port" form in the host field (single colon only,
+    // so IPv6 literals are left alone). An explicit cfg.port still applies if no
+    // suffix is present.
+    std::string host = cfg.host;
+    unsigned int port = cfg.port;
+    if (std::count(host.begin(), host.end(), ':') == 1) {
+        const auto colon = host.find(':');
+        const std::string p = host.substr(colon + 1);
+        if (!p.empty() && p.find_first_not_of("0123456789") == std::string::npos) {
+            port = static_cast<unsigned int>(std::atoi(p.c_str()));
+            host = host.substr(0, colon);
+        }
+    }
+    if (mysql_real_connect(impl_->conn, host.c_str(), cfg.user.c_str(), cfg.password.c_str(),
+                           cfg.database.c_str(), port, nullptr, 0) == nullptr) {
         const std::string err = mysql_error(impl_->conn);
         mysql_close(impl_->conn);
         impl_->conn = nullptr;
-        throw std::runtime_error("cannot connect to MariaDB (" + cfg.user + "@" + cfg.host +
-                                 ":" + std::to_string(cfg.port) + "/" + cfg.database +
-                                 "): " + err);
+        throw std::runtime_error("cannot connect to MariaDB (" + cfg.user + "@" + host + ":" +
+                                 std::to_string(port) + "/" + cfg.database + "): " + err);
     }
 }
 
@@ -714,6 +728,77 @@ long long Database::delete_readings_before(const std::string& sensor_id, const s
       << esc(ts_utc) << "'";
     exec(q.str());
     return static_cast<long long>(mysql_affected_rows(impl_->conn));
+}
+
+void Database::dump_sql(std::ostream& out) {
+    out << "-- NightWatcher database backup\n";
+    out << "-- Restore with: nwdb restore <file>\n";
+    out << "SET NAMES utf8mb4;\n";
+    out << "SET FOREIGN_KEY_CHECKS=0;\n";
+
+    exec("SHOW TABLES");
+    MYSQL_RES* tres = mysql_store_result(impl_->conn);
+    if (tres == nullptr) throw std::runtime_error(std::string("SHOW TABLES: ") + mysql_error(impl_->conn));
+    std::vector<std::string> tables;
+    while (MYSQL_ROW tr = mysql_fetch_row(tres))
+        if (tr[0]) tables.emplace_back(tr[0]);
+    mysql_free_result(tres);
+
+    for (const auto& t : tables) {
+        // Schema (collapsed to a single line so each statement is one line).
+        exec("SHOW CREATE TABLE `" + t + "`");
+        std::string create;
+        if (MYSQL_RES* cres = mysql_store_result(impl_->conn)) {
+            if (MYSQL_ROW cr = mysql_fetch_row(cres))
+                if (cr[1]) create = cr[1];
+            mysql_free_result(cres);
+        }
+        for (char& ch : create)
+            if (ch == '\n' || ch == '\r') ch = ' ';
+        out << "DROP TABLE IF EXISTS `" << t << "`;\n";
+        if (!create.empty()) out << create << ";\n";
+
+        // Data, batched into multi-row INSERTs (one statement per line).
+        exec("SELECT * FROM `" + t + "`");
+        MYSQL_RES* dres = mysql_store_result(impl_->conn);
+        if (dres == nullptr)
+            throw std::runtime_error("dump " + t + ": " + mysql_error(impl_->conn));
+        const unsigned int cols = mysql_num_fields(dres);
+        int in_batch = 0;
+        constexpr int kBatch = 100;
+        while (MYSQL_ROW row = mysql_fetch_row(dres)) {
+            const unsigned long* lens = mysql_fetch_lengths(dres);
+            out << (in_batch == 0 ? "INSERT INTO `" + t + "` VALUES " : ",") << "(";
+            for (unsigned int c = 0; c < cols; ++c) {
+                if (c) out << ",";
+                if (row[c] == nullptr) out << "NULL";
+                else out << "'" << esc(std::string(row[c], lens[c])) << "'";
+            }
+            out << ")";
+            if (++in_batch == kBatch) { out << ";\n"; in_batch = 0; }
+        }
+        if (in_batch > 0) out << ";\n";
+        mysql_free_result(dres);
+    }
+    out << "SET FOREIGN_KEY_CHECKS=1;\n";
+}
+
+long long Database::restore_sql(std::istream& in) {
+    long long n = 0;
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto a = line.find_first_not_of(" \t\r");
+        if (a == std::string::npos) continue;              // blank line
+        if (line.compare(a, 2, "--") == 0) continue;       // comment
+        auto e = line.find_last_not_of(" \t\r");
+        if (line[e] == ';') {                              // drop the trailing ';'
+            if (e == a) continue;                          // a bare semicolon
+            --e;
+        }
+        exec(line.substr(a, e - a + 1));
+        ++n;
+    }
+    return n;
 }
 
 std::vector<TableCount> Database::schema_status() {

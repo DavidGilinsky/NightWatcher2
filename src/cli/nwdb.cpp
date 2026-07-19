@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -42,7 +43,9 @@ void usage(const char* argv0) {
         << "  " << argv0 << " set-sensor <ID> [metadata...]      (partial edit)\n"
         << "  " << argv0 << " poll <ID>                          (read SQM -> store)\n"
         << "  " << argv0 << " cal <ID>                           (read + store calibration)\n"
-        << "  " << argv0 << " readings <ID> [--limit N]\n\n"
+        << "  " << argv0 << " readings <ID> [--limit N]\n"
+        << "  " << argv0 << " backup [FILE]                     (dump whole DB; stdout if no FILE)\n"
+        << "  " << argv0 << " restore FILE                       (load a backup; replaces data)\n\n"
         << "Metadata flags (add-sensor / set-sensor):\n"
         << "  --tcp HOST[:PORT]   --name NAME       --site SITE\n"
         << "  --lat DEG           --lon DEG         --elev METERS\n"
@@ -50,7 +53,8 @@ void usage(const char* argv0) {
         << "  --status S          --installed DATE  --poll-interval SECONDS\n"
         << "  --notes TEXT        --no-probe        (skip reading ix from the device)\n\n"
         << "add-sensor auto-fills serial/protocol/feature from the device (ix) unless\n"
-        << "--no-probe is given. Connection comes from NW_DB_HOST/PORT/USER/PASSWORD/NAME.\n";
+        << "--no-probe is given. Connection comes from NW_DB_HOST/PORT/USER/PASSWORD/NAME\n"
+        << "(NW_DB_HOST may be a remote host, and may carry a ':PORT' suffix).\n";
 }
 
 void split_endpoint(const std::string& addr, std::string& host, uint16_t& port) {
@@ -267,6 +271,26 @@ int main(int argc, char** argv) {
         } else if (cmd == "readings") {
             if (pos.size() < 2) { std::cerr << "error: readings requires a sensor ID\n"; return 2; }
             return cmd_readings(db, pos[1], limit);
+        } else if (cmd == "backup") {
+            if (pos.size() >= 2) {
+                std::ofstream f(pos[1], std::ios::binary | std::ios::trunc);
+                if (!f) { std::cerr << "error: cannot open '" << pos[1] << "' for writing\n"; return 1; }
+                db.dump_sql(f);
+                if (!f) { std::cerr << "error: writing '" << pos[1] << "' failed\n"; return 1; }
+                std::cout << "database backed up to " << pos[1] << "\n";
+            } else {
+                db.dump_sql(std::cout);
+            }
+            return 0;
+        } else if (cmd == "restore") {
+            if (pos.size() < 2) { std::cerr << "error: restore requires a backup file\n"; return 2; }
+            std::ifstream f(pos[1], std::ios::binary);
+            if (!f) { std::cerr << "error: cannot open '" << pos[1] << "'\n"; return 1; }
+            std::cerr << "restoring from " << pos[1]
+                      << " (this replaces the current database contents)...\n";
+            const long long n = db.restore_sql(f);
+            std::cout << "restored " << n << " statement(s) from " << pos[1] << "\n";
+            return 0;
         }
         std::cerr << "error: unknown command '" << cmd << "'\n";
         usage(argv[0]);
