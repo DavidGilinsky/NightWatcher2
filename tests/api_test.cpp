@@ -220,6 +220,11 @@ int main() {
         CHECK(j["configured"]["bind"] == "127.0.0.1");
         CHECK(j["configured"]["port"] == 8080);
     }
+    // Apply endpoint: admin-only, and a no-op here (no on_apply callback set).
+    CHECK((r = cli.Post("/api/v1/settings/apply", "", "application/json")) && r->status == 401);
+    r = cli.Post("/api/v1/settings/apply", sauth, "", "application/json");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) CHECK(json::parse(r->body)["applying"] == false);
 
     // Logout invalidates the session.
     r = cli.Post("/api/v1/logout", sauth, "", "application/json");

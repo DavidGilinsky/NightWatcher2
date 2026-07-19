@@ -399,6 +399,7 @@ void HttpServer::start() {
     const std::string schema_file = impl_->cfg.schema_file;
     const std::string run_bind = impl_->cfg.bind;  // what this process actually bound
     const int run_port = impl_->cfg.port;
+    const std::function<void()> on_apply = impl_->cfg.on_apply;
 
     if (!impl_->cfg.web_root.empty()) {
         srv.set_mount_point("/", impl_->cfg.web_root);
@@ -463,6 +464,19 @@ void HttpServer::start() {
                     send(res, 200, settings_json(db));
                 } catch (const std::exception& e) { send_err(res, 500, e.what()); }
             });
+    // Apply the configured bind/port now by asking the daemon to restart the
+    // server (the response is sent first; on_apply is a no-op if unset).
+    srv.Post("/api/v1/settings/apply",
+             [dbc, token, settings_json, on_apply](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 try {
+                     db::Database db(dbc);
+                     json j = settings_json(db);
+                     j["applying"] = static_cast<bool>(on_apply);
+                     send(res, 200, j);
+                 } catch (const std::exception& e) { send_err(res, 500, e.what()); return; }
+                 if (on_apply) on_apply();
+             });
     srv.Get("/api/v1/sensors", [dbc](const httplib::Request&, httplib::Response& res) {
         try {
             db::Database db(dbc);

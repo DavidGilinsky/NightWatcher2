@@ -784,8 +784,20 @@ async function viewServer() {
   f.append(warn);
 
   const out = el('div'); f.append(out);
+  const applyNow = async () => {
+    out.innerHTML = '';
+    const port = Number(f.querySelector('input[name="port"]').value);
+    try {
+      await api('PUT', '/settings', { bind: bindInput.value.trim(), port });
+      const r = await api('POST', '/settings/apply', {});
+      out.append(msg('warn', `Applying: the server is restarting on ${r.configured.bind}:${r.configured.port}. ` +
+        'If the address changed, reconnect there. Reloading this page…'));
+      setTimeout(() => location.reload(), 2500);
+    } catch (ex) { out.append(msg('err', ex.message)); }
+  };
   f.append(el('div', { class: 'row', style: 'margin-top:.6rem' },
-    el('button', { class: 'btn', type: 'submit' }, 'Save')));
+    el('button', { class: 'btn', type: 'submit' }, 'Save'),
+    el('button', { class: 'btn', type: 'button', onclick: applyNow }, 'Restart & apply')));
   f.addEventListener('submit', async e => {
     e.preventDefault();
     out.innerHTML = '';

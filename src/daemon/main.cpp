@@ -9,6 +9,7 @@
 // Version:       0.1.0
 // License:       GPL-3.0-or-later
 // ---------------------------------------------------------------------------
+#include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -17,9 +18,11 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <pthread.h>
+#include <unistd.h>
 
 #include "config.hpp"
 #include "database.hpp"
@@ -111,6 +114,7 @@ int main(int argc, char** argv) {
     sigaddset(&sigs, SIGINT);
     sigaddset(&sigs, SIGTERM);
     sigaddset(&sigs, SIGHUP);
+    sigaddset(&sigs, SIGUSR1);  // "Restart & apply": rebind the API server
     pthread_sigmask(SIG_BLOCK, &sigs, nullptr);
 
     // Verify the database is reachable and record startup.
@@ -155,9 +159,13 @@ int main(int argc, char** argv) {
     // Start the HTTP/JSON API (shared with the web UI). It reads the database per
     // request, so it keeps running across sensor-list reloads.
     std::unique_ptr<HttpServer> api;
-    if (cfg.api_port > 0) {
-        // Effective bind/port: config-file defaults, overridden by DB settings
-        // (which the web UI edits). Applied here at startup.
+    // (Re)start the HTTP API on the effective bind/port: config-file defaults,
+    // overridden by DB settings that the web UI edits. Re-callable, so the
+    // "Restart & apply" button (which raises SIGUSR1) can rebind without a full
+    // process restart.
+    const auto start_api_server = [&]() {
+        api.reset();  // stop any running server first (~HttpServer stops + joins)
+        if (cfg.api_port <= 0) return;
         std::string bind = cfg.api_bind;
         int port = cfg.api_port;
         try {
@@ -171,7 +179,7 @@ int main(int argc, char** argv) {
 
         std::string tok;
         if (const char* t = std::getenv("NW_API_TOKEN")) tok = t;
-        const auto start_api = [&](const std::string& b) {
+        const auto make = [&](const std::string& b) {
             ApiConfig ac;
             ac.bind = b;
             ac.port = port;
@@ -179,12 +187,13 @@ int main(int argc, char** argv) {
             ac.schema_file = cfg.schema_file;
             ac.web_root = cfg.web_root;
             ac.db = db_cfg;
+            ac.on_apply = [] { kill(getpid(), SIGUSR1); };  // raised by POST /settings/apply
             auto srv = std::make_unique<HttpServer>(std::move(ac));
             srv->start();  // throws on bind failure
             return srv;
         };
         try {
-            api = start_api(bind);
+            api = make(bind);
         } catch (const std::exception& e) {
             log_error("API failed to start on " + bind + ":" + std::to_string(port) + ": " + e.what());
             // Anti-lockout: fall back to localhost so the UI stays reachable to fix the setting.
@@ -192,7 +201,7 @@ int main(int argc, char** argv) {
                 log_warn("retrying API on 127.0.0.1:" + std::to_string(port) +
                          " so the web UI stays reachable");
                 try {
-                    api = start_api("127.0.0.1");
+                    api = make("127.0.0.1");
                 } catch (const std::exception& e2) {
                     log_error(std::string("localhost fallback also failed: ") + e2.what());
                     api.reset();
@@ -201,7 +210,8 @@ int main(int argc, char** argv) {
                 api.reset();
             }
         }
-    }
+    };
+    start_api_server();
 
     int exit_code = 0;
     bool reload = true;
@@ -252,6 +262,12 @@ int main(int argc, char** argv) {
                 esched.stop();
                 reload = true;
                 break;
+            }
+            if (sig == SIGUSR1) {
+                log_info("SIGUSR1 received; restarting the API server to apply settings");
+                std::this_thread::sleep_for(std::chrono::milliseconds(250));  // let the response flush
+                start_api_server();  // reads fresh settings; anti-lockout falls back to localhost
+                continue;  // keep polling; no device reload
             }
         }
         sched.join();

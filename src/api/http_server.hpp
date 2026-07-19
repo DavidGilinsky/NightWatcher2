@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -25,6 +26,10 @@ struct ApiConfig {
     std::string schema_file;  // path to schema.sql for POST /db/init
     std::string web_root;     // static files directory (optional)
     db::DbConfig db;
+    // Invoked (after the response) when POST /settings/apply is called, so the
+    // daemon can restart the server on a changed bind. Empty = the endpoint is a
+    // no-op (e.g. in tests).
+    std::function<void()> on_apply;
 };
 
 // Runs an httplib server on a background thread. Each request handler opens its
