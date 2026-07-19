@@ -37,6 +37,20 @@ test_nightwatcher.conf
 nightwatcher.env
 *.local.conf
 
+# Local scratch + credentials (OAuth client JSON, service-account keys, sample data)
+/sample/
+
+# Database dumps / backups are ignored anywhere in the tree: a `nwdb backup`
+# contains secrets in the clear (Drive refresh token, weather API keys, user
+# password hashes). Only the schema/setup/migration SQL is tracked.
+*.sql
+!sql/schema.sql
+!sql/setup.sql
+!sql/migrations/*.sql
+
+# SQM/observation data exports
+*.dat
+
 # Editor / IDE
 *.swp
 *~
