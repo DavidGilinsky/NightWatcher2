@@ -15,11 +15,11 @@
 #include <string>
 #include <vector>
 
+#include "device_factory.hpp"
 #include "discovery.hpp"
 #include "nightwatcher/version.hpp"
 #include "protocol.hpp"
 #include "sqm_device.hpp"
-#include "tcp_transport.hpp"
 
 namespace {
 
@@ -30,16 +30,22 @@ void usage(const char* argv0) {
         << "sqmctl " << NIGHTWATCHER_VERSION << " \xe2\x80\x94 Unihedron SQM tool\n\n"
         << "Usage:\n"
         << "  " << argv0 << " discover <CIDR> [--port N] [--timeout MS] [--concurrency N]\n"
-        << "  " << argv0 << " --tcp HOST[:PORT] <command> [--timeout MS]\n\n"
+        << "  " << argv0 << " discover-usb [--timeout MS]\n"
+        << "  " << argv0 << " --tcp HOST[:PORT] <command> [--timeout MS]   (SQM-LE)\n"
+        << "  " << argv0 << " --serial DEVICE <command> [--timeout MS]     (SQM-LU)\n\n"
         << "Query commands:\n"
         << "  info         Unit information (ix)\n"
         << "  read         Averaged reading (rx)\n"
         << "  unaveraged   Unaveraged reading (ux)\n"
         << "  cal          Calibration information (cx)\n\n"
-        << "discover scans a subnet for SQM-LE units, e.g.:\n"
-        << "  " << argv0 << " discover 192.168.1.0/24\n\n"
-        << "Default port is 10001 (SQM-LE). Query timeout defaults to 5000 ms;\n"
-        << "discovery timeout defaults to 700 ms with 128-way concurrency.\n";
+        << "discover scans a subnet for SQM-LE units; discover-usb probes the local\n"
+        << "serial/USB bus for SQM-LU units, e.g.:\n"
+        << "  " << argv0 << " discover 192.168.1.0/24\n"
+        << "  " << argv0 << " discover-usb\n"
+        << "  " << argv0 << " --serial /dev/ttyUSB0 info\n\n"
+        << "TCP default port is 10001 (SQM-LE); serial is 115200 8N1 (SQM-LU). Query\n"
+        << "timeout defaults to 5000 ms; discovery timeouts default to 700 ms (subnet)\n"
+        << "and 2000 ms (usb).\n";
 }
 
 void print_reading(const Reading& r) {
@@ -76,32 +82,45 @@ int run_discover(const std::string& cidr, uint16_t port, int timeout_ms, int con
     }
 }
 
-int run_query(const std::string& endpoint, const std::string& command, int timeout_ms) {
-    std::string host = endpoint;
-    uint16_t port = 10001;
-    const auto colon = endpoint.rfind(':');
-    if (colon != std::string::npos) {
-        host = endpoint.substr(0, colon);
-        port = static_cast<uint16_t>(std::atoi(endpoint.substr(colon + 1).c_str()));
-    }
-
+int run_discover_usb(int timeout_ms) {
     try {
-        auto transport = std::make_unique<TcpTransport>(host, port, timeout_ms);
-        SqmDevice dev(std::move(transport));
+        std::cerr << "probing serial ports for SQM-LU (timeout " << timeout_ms << " ms) ...\n";
+        const auto found = discover_serial(timeout_ms);
+        if (found.empty()) {
+            std::cout << "No SQM-LU found on the serial/USB bus\n";
+            return 1;
+        }
+        std::cout << "Found " << found.size() << " SQM-LU:\n";
+        for (const auto& d : found) {
+            std::cout << "  " << d.device << "  serial=" << d.info.serial
+                      << " model=" << d.info.model << " feature=" << d.info.feature
+                      << " protocol=" << d.info.protocol << "\n";
+        }
+        return 0;
+    } catch (const std::exception& e) {
+        std::cerr << "error: " << e.what() << "\n";
+        return 1;
+    }
+}
+
+int run_query(const std::string& transport, const std::string& address, const std::string& command,
+              int timeout_ms) {
+    try {
+        auto dev = open_device(transport, address, timeout_ms);
 
         if (command == "info") {
-            const UnitInfo u = dev.info();
+            const UnitInfo u = dev->info();
             std::cout << "raw      : " << u.raw << "\n"
                       << "protocol : " << u.protocol << "\n"
                       << "model    : " << u.model << "\n"
                       << "feature  : " << u.feature << "\n"
                       << "serial   : " << u.serial << "\n";
         } else if (command == "read") {
-            print_reading(dev.read_averaged());
+            print_reading(dev->read_averaged());
         } else if (command == "unaveraged") {
-            print_reading(dev.read_unaveraged());
+            print_reading(dev->read_unaveraged());
         } else if (command == "cal") {
-            const Calibration c = dev.calibration();
+            const Calibration c = dev->calibration();
             std::cout << "raw               : " << c.raw << "\n"
                       << "light cal offset  : " << c.light_cal_offset << " mag\n"
                       << "dark cal period s : " << c.dark_cal_period_s << "\n"
@@ -123,6 +142,7 @@ int run_query(const std::string& endpoint, const std::string& command, int timeo
 
 int main(int argc, char** argv) {
     std::string endpoint;
+    std::string transport = "tcp";
     std::vector<std::string> positionals;
     int timeout_ms = -1;   // -1 => use a per-mode default
     uint16_t port = 10001;
@@ -138,6 +158,11 @@ int main(int argc, char** argv) {
             return 0;
         } else if (a == "--tcp") {
             if (++i >= argc) { std::cerr << "error: --tcp requires HOST[:PORT]\n"; return 2; }
+            transport = "tcp";
+            endpoint = argv[i];
+        } else if (a == "--serial") {
+            if (++i >= argc) { std::cerr << "error: --serial requires a DEVICE path\n"; return 2; }
+            transport = "serial";
             endpoint = argv[i];
         } else if (a == "--timeout") {
             if (++i >= argc) { std::cerr << "error: --timeout requires MS\n"; return 2; }
@@ -172,9 +197,13 @@ int main(int argc, char** argv) {
                             concurrency);
     }
 
+    if (command == "discover-usb") {
+        return run_discover_usb(timeout_ms < 0 ? 2000 : timeout_ms);
+    }
+
     if (endpoint.empty()) {
-        std::cerr << "error: '" << command << "' requires --tcp HOST[:PORT]\n";
+        std::cerr << "error: '" << command << "' requires --tcp HOST[:PORT] or --serial DEVICE\n";
         return 2;
     }
-    return run_query(endpoint, command, timeout_ms < 0 ? 5000 : timeout_ms);
+    return run_query(transport, endpoint, command, timeout_ms < 0 ? 5000 : timeout_ms);
 }

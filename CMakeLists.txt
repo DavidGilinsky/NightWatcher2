@@ -57,7 +57,9 @@ target_link_libraries(nw_core PUBLIC nw_warnings)
 add_library(nw_sqm STATIC
     src/sqm/protocol.cpp
     src/sqm/tcp_transport.cpp
+    src/sqm/serial_transport.cpp
     src/sqm/sqm_device.cpp
+    src/sqm/device_factory.cpp
     src/sqm/discovery.cpp)
 target_include_directories(nw_sqm PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sqm
@@ -161,6 +163,10 @@ if(NW_BUILD_TESTS)
     add_executable(discovery_test tests/discovery_test.cpp)
     target_link_libraries(discovery_test PRIVATE nw_sqm)
     add_test(NAME discovery_test COMMAND discovery_test)
+
+    add_executable(serial_transport_test tests/serial_transport_test.cpp)
+    target_link_libraries(serial_transport_test PRIVATE nw_sqm)
+    add_test(NAME serial_transport_test COMMAND serial_transport_test)
 
     if(NW_WITH_DB)
         add_executable(db_test tests/db_test.cpp)

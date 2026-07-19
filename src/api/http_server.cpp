@@ -30,8 +30,8 @@
 #include "nlohmann/json.hpp"
 #include "password.hpp"
 #include "provider.hpp"
+#include "device_factory.hpp"
 #include "sqm_device.hpp"
-#include "tcp_transport.hpp"
 
 using json = nlohmann::json;
 
@@ -268,6 +268,10 @@ db::SensorFields sensor_fields_from_json(const json& b) {
         f.transport = std::string("tcp");
         f.address = b["tcp"].get<std::string>();
     }
+    if (b.contains("serial") && !b["serial"].is_null()) {
+        f.transport = std::string("serial");
+        f.address = b["serial"].get<std::string>();
+    }
     return f;
 }
 db::WeatherStationFields wx_fields_from_json(const json& b) {
@@ -303,26 +307,12 @@ db::ExportTargetFields export_fields_from_json(const json& b) {
     return f;
 }
 
-void split_endpoint(const std::string& addr, std::string& host, uint16_t& port) {
-    host = addr;
-    port = 10001;
-    const auto colon = addr.rfind(':');
-    if (colon != std::string::npos) {
-        host = addr.substr(0, colon);
-        port = static_cast<uint16_t>(std::atoi(addr.substr(colon + 1).c_str()));
-    }
-}
-
 // Best-effort fill of serial/protocol/feature from the device's ix response.
 void probe_fill(db::SensorFields& f) {
-    if (!(f.transport && *f.transport == "tcp" && f.address)) return;
+    if (!(f.transport && f.address)) return;
     try {
-        std::string host;
-        uint16_t port;
-        split_endpoint(*f.address, host, port);
-        auto t = std::make_unique<sqm::TcpTransport>(host, port, 3000);
-        sqm::SqmDevice dev(std::move(t));
-        const sqm::UnitInfo u = dev.info();
+        auto dev = sqm::open_device(*f.transport, *f.address, 3000);
+        const sqm::UnitInfo u = dev->info();
         if (!f.serial_number) f.serial_number = u.serial;
         if (!f.protocol_ver) f.protocol_ver = u.protocol;
         if (!f.feature_ver) f.feature_ver = u.feature;
@@ -626,6 +616,20 @@ void HttpServer::start() {
             send(res, 200, arr);
         } catch (const std::exception& e) { send_err(res, 400, e.what()); }
     });
+    // Discover SQM-LU units on the local serial/USB bus (probes serial ports).
+    srv.Get("/api/v1/discover/usb", [](const httplib::Request&, httplib::Response& res) {
+        try {
+            json arr = json::array();
+            for (const auto& d : sqm::discover_serial()) {
+                arr.push_back(json{{"device", d.device},
+                                   {"serial", d.info.serial},
+                                   {"model", d.info.model},
+                                   {"feature", d.info.feature},
+                                   {"protocol", d.info.protocol}});
+            }
+            send(res, 200, arr);
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
 
     // ---- write endpoints (token required) ----
     srv.Post("/api/v1/sensors", [dbc, token](const httplib::Request& req, httplib::Response& res) {
@@ -697,13 +701,8 @@ void HttpServer::start() {
                      db::Database db(dbc);
                      const auto s = db.find_sensor(req.matches[1]);
                      if (!s) { send_err(res, 404, "no such sensor"); return; }
-                     if (s->transport != "tcp") { send_err(res, 400, "only tcp transport supported"); return; }
-                     std::string host;
-                     uint16_t port;
-                     split_endpoint(s->address, host, port);
-                     auto t = std::make_unique<sqm::TcpTransport>(host, port, 5000);
-                     sqm::SqmDevice dev(std::move(t));
-                     const sqm::Reading r = dev.read_averaged();
+                     auto dev = sqm::open_device(s->transport, s->address, 5000);
+                     const sqm::Reading r = dev->read_averaged();
                      const std::string quality = (r.mag_arcsec2 <= 0.0) ? "saturated" : "ok";
                      const long long id = db.insert_reading(s->id, r, "", "poll", quality);
                      send(res, 200,
@@ -727,22 +726,16 @@ void HttpServer::start() {
                      s = db.find_sensor(req.matches[1]);
                  } catch (const std::exception& e) { send_err(res, 500, e.what()); return; }
                  if (!s) { send_err(res, 404, "no such sensor"); return; }
-                 if (s->transport != "tcp") { send_err(res, 400, "only tcp transport supported"); return; }
-
-                 std::string host;
-                 uint16_t port;
-                 split_endpoint(s->address, host, port);
 
                  json checks = json::array();
                  bool overall = true;
 
-                 // 1) Connect (TcpTransport connects in its constructor).
+                 // 1) Connect/open the transport (throws if unreachable or busy).
                  std::unique_ptr<sqm::SqmDevice> dev;
                  try {
-                     auto t = std::make_unique<sqm::TcpTransport>(host, port, 5000);
-                     dev = std::make_unique<sqm::SqmDevice>(std::move(t));
+                     dev = sqm::open_device(s->transport, s->address, 5000);
                      checks.push_back({{"name", "connect"}, {"ok", true},
-                                       {"detail", host + ":" + std::to_string(port)}});
+                                       {"detail", s->transport + " " + s->address}});
                  } catch (const std::exception& e) {
                      checks.push_back({{"name", "connect"}, {"ok", false}, {"detail", e.what()}});
                      send(res, 200,

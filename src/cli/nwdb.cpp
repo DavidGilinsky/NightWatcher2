@@ -19,10 +19,10 @@
 #include <vector>
 
 #include "database.hpp"
+#include "device_factory.hpp"
 #include "nightwatcher/version.hpp"
 #include "protocol.hpp"
 #include "sqm_device.hpp"
-#include "tcp_transport.hpp"
 
 namespace {
 
@@ -39,7 +39,8 @@ void usage(const char* argv0) {
         << "Usage:\n"
         << "  " << argv0 << " sensors\n"
         << "  " << argv0 << " show <ID>\n"
-        << "  " << argv0 << " add-sensor <ID> --tcp HOST[:PORT] [metadata...]\n"
+        << "  " << argv0 << " add-sensor <ID> --tcp HOST[:PORT] [metadata...]   (SQM-LE)\n"
+        << "  " << argv0 << " add-sensor <ID> --serial /dev/ttyUSB0 [metadata]  (SQM-LU)\n"
         << "  " << argv0 << " set-sensor <ID> [metadata...]      (partial edit)\n"
         << "  " << argv0 << " poll <ID>                          (read SQM -> store)\n"
         << "  " << argv0 << " cal <ID>                           (read + store calibration)\n"
@@ -47,7 +48,8 @@ void usage(const char* argv0) {
         << "  " << argv0 << " backup [FILE]                     (dump whole DB; stdout if no FILE)\n"
         << "  " << argv0 << " restore FILE                       (load a backup; replaces data)\n\n"
         << "Metadata flags (add-sensor / set-sensor):\n"
-        << "  --tcp HOST[:PORT]   --name NAME       --site SITE\n"
+        << "  --tcp HOST[:PORT]   --serial DEVICE   (choose one transport)\n"
+        << "  --name NAME         --site SITE\n"
         << "  --lat DEG           --lon DEG         --elev METERS\n"
         << "  --timezone TZ       --model MODEL     --serial SERIAL\n"
         << "  --status S          --installed DATE  --poll-interval SECONDS\n"
@@ -57,38 +59,16 @@ void usage(const char* argv0) {
         << "(NW_DB_HOST may be a remote host, and may carry a ':PORT' suffix).\n";
 }
 
-void split_endpoint(const std::string& addr, std::string& host, uint16_t& port) {
-    host = addr;
-    port = 10001;
-    const auto colon = addr.rfind(':');
-    if (colon != std::string::npos) {
-        host = addr.substr(0, colon);
-        port = static_cast<uint16_t>(std::atoi(addr.substr(colon + 1).c_str()));
-    }
-}
-
 std::unique_ptr<sqm::SqmDevice> open_device(const SensorRow& s) {
-    if (s.transport != "tcp") {
-        throw std::runtime_error("sensor '" + s.id + "' uses unsupported transport '" +
-                                 s.transport + "' (only tcp is implemented)");
-    }
-    std::string host;
-    uint16_t port;
-    split_endpoint(s.address, host, port);
-    auto transport = std::make_unique<sqm::TcpTransport>(host, port, 5000);
-    return std::make_unique<sqm::SqmDevice>(std::move(transport));
+    return sqm::open_device(s.transport, s.address, 5000);
 }
 
 // Fill serial/protocol/feature from the device's ix response (best effort).
 void probe_and_fill(SensorFields& sf) {
-    if (!(sf.transport && *sf.transport == "tcp" && sf.address)) return;
+    if (!(sf.transport && sf.address)) return;
     try {
-        std::string host;
-        uint16_t port;
-        split_endpoint(*sf.address, host, port);
-        auto transport = std::make_unique<sqm::TcpTransport>(host, port, 3000);
-        sqm::SqmDevice dev(std::move(transport));
-        const sqm::UnitInfo u = dev.info();
+        auto dev = sqm::open_device(*sf.transport, *sf.address, 3000);
+        const sqm::UnitInfo u = dev->info();
         if (!sf.serial_number) sf.serial_number = u.serial;
         if (!sf.protocol_ver) sf.protocol_ver = u.protocol;
         if (!sf.feature_ver) sf.feature_ver = u.feature;
@@ -209,6 +189,7 @@ int main(int argc, char** argv) {
         else if (a == "--version") { std::cout << "nwdb " << NIGHTWATCHER_VERSION << "\n"; return 0; }
         else if (a == "--no-probe") { no_probe = true; }
         else if (a == "--tcp") { if (!next_arg(i, argc, argv, v)) return 2; sf.transport = "tcp"; sf.address = v; }
+        else if (a == "--serial") { if (!next_arg(i, argc, argv, v)) return 2; sf.transport = "serial"; sf.address = v; }
         else if (a == "--name") { if (!next_arg(i, argc, argv, v)) return 2; sf.name = v; }
         else if (a == "--site") { if (!next_arg(i, argc, argv, v)) return 2; sf.site = v; }
         else if (a == "--timezone") { if (!next_arg(i, argc, argv, v)) return 2; sf.timezone = v; }

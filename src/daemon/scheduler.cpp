@@ -20,24 +20,11 @@
 #include <string>
 #include <utility>
 
+#include "device_factory.hpp"
 #include "logging.hpp"
 #include "sqm_device.hpp"
-#include "tcp_transport.hpp"
 
 namespace nightwatcher {
-namespace {
-
-void split_endpoint(const std::string& addr, std::string& host, uint16_t& port) {
-    host = addr;
-    port = 10001;
-    const auto colon = addr.rfind(':');
-    if (colon != std::string::npos) {
-        host = addr.substr(0, colon);
-        port = static_cast<uint16_t>(std::atoi(addr.substr(colon + 1).c_str()));
-    }
-}
-
-}  // namespace
 
 Scheduler::Scheduler(db::DbConfig db_cfg) : db_cfg_(std::move(db_cfg)) {}
 
@@ -48,9 +35,9 @@ Scheduler::~Scheduler() {
 
 void Scheduler::start(const std::vector<db::SensorRow>& sensors) {
     for (const auto& s : sensors) {
-        if (s.transport != "tcp") {
+        if (s.transport != "tcp" && s.transport != "serial") {
             log_warn("skipping sensor " + s.id + ": transport '" + s.transport +
-                     "' not supported yet");
+                     "' not supported");
             continue;
         }
         threads_.emplace_back(&Scheduler::worker, this, s);
@@ -82,9 +69,6 @@ void Scheduler::worker(db::SensorRow s) {
     }
 
     const int interval = s.poll_interval_s > 0 ? s.poll_interval_s : 300;
-    std::string host;
-    uint16_t port;
-    split_endpoint(s.address, host, port);
 
     bool up = false;        // last poll succeeded
     bool reported = false;  // we have logged the current state at least once
@@ -98,9 +82,8 @@ void Scheduler::worker(db::SensorRow s) {
         sqm::Reading r;
         bool got = false;
         try {
-            auto transport = std::make_unique<sqm::TcpTransport>(host, port, 5000);
-            sqm::SqmDevice dev(std::move(transport));
-            r = dev.read_averaged();
+            auto dev = sqm::open_device(s.transport, s.address, 5000);
+            r = dev->read_averaged();
             got = true;
         } catch (const std::exception& e) {
             if (up || !reported) {

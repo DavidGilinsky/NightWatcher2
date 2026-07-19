@@ -266,7 +266,20 @@ function sensorForm(s) {
   f.append(el('h3', {}, editing ? 'Edit ' + s.id : 'Add sensor'));
   const g = el('div', { class: 'form-grid' });
   if (!editing) g.append(field('ID *', 'id', ''));
-  g.append(field('TCP host:port', 'tcp', editing ? s.address : ''));
+  const curTransport = editing ? (s.transport || 'tcp') : 'tcp';
+  const transportSel = el('select', { name: 'transport' },
+    el('option', { value: 'tcp', selected: curTransport === 'tcp' ? 'selected' : null }, 'SQM-LE (Ethernet)'),
+    el('option', { value: 'serial', selected: curTransport === 'serial' ? 'selected' : null }, 'SQM-LU (USB)'));
+  g.append(el('label', {}, 'Transport', transportSel));
+  const addrInput = el('input', { name: 'address', type: 'text', value: editing ? (s.address || '') : '' });
+  const addrLabelText = document.createTextNode('');
+  g.append(el('label', {}, addrLabelText, addrInput));
+  const syncAddr = () => {
+    const serial = transportSel.value === 'serial';
+    addrLabelText.textContent = serial ? 'Serial device' : 'Host:port';
+    addrInput.placeholder = serial ? '/dev/ttyUSB0 (or /dev/serial/by-id/…)' : 'host:10001';
+  };
+  transportSel.addEventListener('change', syncAddr); syncAddr();
   g.append(field('Name', 'name', editing ? s.name : ''));
   g.append(field('Site', 'site', editing ? s.site : ''));
   g.append(field('Latitude', 'latitude', editing ? s.latitude : '', 'number'));
@@ -280,6 +293,34 @@ function sensorForm(s) {
     ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: o === defaultStatus ? 'selected' : null }, o)));
   g.append(el('label', {}, 'Status', statusSel));
   f.append(g);
+  // USB scan: find SQM-LU units on the serial bus and fill the form from a pick.
+  const scanOut = el('div', { style: 'margin-top:.4rem' });
+  f.append(el('div', { class: 'row', style: 'margin-top:.3rem' },
+    el('button', {
+      class: 'btn ghost sm', type: 'button', onclick: async () => {
+        scanOut.innerHTML = ''; scanOut.append(msg('warn', 'Scanning the USB bus…'));
+        try {
+          const found = await api('GET', '/discover/usb');
+          scanOut.innerHTML = '';
+          if (!found.length) {
+            scanOut.append(msg('warn', 'No SQM-LU found. Check the USB cable and that the daemon user is in the “dialout” group.'));
+            return;
+          }
+          for (const d of found) {
+            scanOut.append(el('div', { class: 'row', style: 'gap:.5rem;margin:.25rem 0' },
+              el('button', {
+                class: 'btn sm', type: 'button', onclick: () => {
+                  transportSel.value = 'serial'; syncAddr(); addrInput.value = d.device;
+                  const idInput = f.querySelector('input[name="id"]');
+                  if (idInput && !idInput.value && d.serial) idInput.value = 'SQM-' + d.serial;
+                }
+              }, 'Use'),
+              el('span', { class: 'muted', style: 'font-size:.85rem' }, `${d.device} — serial ${d.serial}, model ${d.model}`));
+          }
+        } catch (e) { scanOut.innerHTML = ''; scanOut.append(msg('err', e.message)); }
+      }
+    }, 'Scan USB for SQM-LU')));
+  f.append(scanOut);
   if (!editing) f.append(el('div', { class: 'muted', style: 'font-size:.82rem' },
     'New sensors start disabled — nothing is written to the database. Add it, click Test to verify, then Enable database population.'));
   const err = el('div');

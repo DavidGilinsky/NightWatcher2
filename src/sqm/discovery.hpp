@@ -24,6 +24,13 @@ struct Discovered {
     UnitInfo info;
 };
 
+// An SQM-LU found on the USB/serial bus: its device path (a stable
+// /dev/serial/by-id/... name when available) plus the parsed unit-info.
+struct DiscoveredSerial {
+    std::string device;
+    UnitInfo info;
+};
+
 // Expand an IPv4 CIDR (e.g. "192.168.1.0/24") into candidate host addresses.
 // Network and broadcast addresses are excluded for prefixes <= 30; /31 and /32
 // are returned inclusive. Throws std::runtime_error on a malformed CIDR or a
@@ -37,5 +44,12 @@ std::vector<std::string> cidr_hosts(const std::string& cidr);
 // alternative to Lantronix UDP broadcast discovery.
 std::vector<Discovered> discover(const std::string& cidr, uint16_t port = 10001,
                                  int timeout_ms = 700, int concurrency = 128);
+
+// Probe the local serial/USB bus for SQM-LU units: enumerate serial devices
+// (stable /dev/serial/by-id/ names, plus /dev/ttyUSB* and /dev/ttyACM*), open
+// each at 115200 8N1, and keep those that return a valid ix response. Devices
+// held by another process (e.g. a live poll) are skipped. Results are sorted by
+// device path. Note: this briefly opens and sends `ix` to each serial port.
+std::vector<DiscoveredSerial> discover_serial(int timeout_ms = 2000);
 
 }  // namespace nightwatcher::sqm

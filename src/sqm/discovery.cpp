@@ -11,14 +11,19 @@
 #include "discovery.hpp"
 
 #include <arpa/inet.h>
+#include <climits>
+#include <dirent.h>
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <stdexcept>
 #include <thread>
 
+#include "serial_transport.hpp"
 #include "sqm_device.hpp"
 #include "tcp_transport.hpp"
 
@@ -117,6 +122,76 @@ std::vector<Discovered> discover(const std::string& cidr, uint16_t port, int tim
     std::sort(results.begin(), results.end(), [](const Discovered& a, const Discovered& b) {
         return ipv4_to_u32(a.ip) < ipv4_to_u32(b.ip);
     });
+    return results;
+}
+
+namespace {
+
+// Candidate serial devices, de-duplicated by their resolved target: stable
+// /dev/serial/by-id/ names are preferred (they survive re-enumeration), with
+// raw /dev/ttyUSB*/ttyACM* added for anything not covered by a by-id link.
+std::vector<std::string> enumerate_serial_devices() {
+    std::vector<std::string> devices;
+    std::set<std::string> seen;  // realpath targets already queued
+
+    const auto add = [&](const std::string& path) {
+        char rp[PATH_MAX];
+        std::string key = (::realpath(path.c_str(), rp) != nullptr) ? std::string(rp) : path;
+        if (seen.insert(key).second) devices.push_back(path);
+    };
+
+    if (DIR* d = ::opendir("/dev/serial/by-id")) {
+        while (struct dirent* e = ::readdir(d)) {
+            if (e->d_name[0] == '.') continue;
+            add(std::string("/dev/serial/by-id/") + e->d_name);
+        }
+        ::closedir(d);
+    }
+    if (DIR* d = ::opendir("/dev")) {
+        while (struct dirent* e = ::readdir(d)) {
+            const std::string name = e->d_name;
+            if (name.rfind("ttyUSB", 0) == 0 || name.rfind("ttyACM", 0) == 0) add("/dev/" + name);
+        }
+        ::closedir(d);
+    }
+    return devices;
+}
+
+}  // namespace
+
+std::vector<DiscoveredSerial> discover_serial(int timeout_ms) {
+    const std::vector<std::string> devices = enumerate_serial_devices();
+    std::vector<DiscoveredSerial> results;
+    if (devices.empty()) return results;
+
+    std::mutex mtx;
+    std::atomic<size_t> next{0};
+    const int nthreads = std::max(1, std::min<int>(8, static_cast<int>(devices.size())));
+
+    auto worker = [&]() {
+        for (;;) {
+            const size_t i = next.fetch_add(1);
+            if (i >= devices.size()) return;
+            const std::string& dev = devices[i];
+            try {
+                auto transport = std::make_unique<SerialTransport>(dev, 115200, timeout_ms);
+                SqmDevice device(std::move(transport));
+                const UnitInfo info = device.info();  // sends ix; throws if not an SQM
+                std::lock_guard<std::mutex> lock(mtx);
+                results.push_back(DiscoveredSerial{dev, info});
+            } catch (const std::exception&) {
+                // Not an SQM, inaccessible (permissions), or busy — skip it.
+            }
+        }
+    };
+
+    std::vector<std::thread> pool;
+    pool.reserve(static_cast<size_t>(nthreads));
+    for (int i = 0; i < nthreads; ++i) pool.emplace_back(worker);
+    for (auto& th : pool) th.join();
+
+    std::sort(results.begin(), results.end(),
+              [](const DiscoveredSerial& a, const DiscoveredSerial& b) { return a.device < b.device; });
     return results;
 }
 
