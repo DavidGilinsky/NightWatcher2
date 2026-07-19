@@ -109,7 +109,10 @@ if(NW_WITH_DB)
     add_library(nw_export STATIC
         src/export/exporter.cpp
         src/export/dsn_format.cpp
-        src/export/gdrive.cpp)
+        src/export/gdrive.cpp
+        src/export/timeutil.cpp
+        src/export/export_runner.cpp
+        src/export/export_scheduler.cpp)
     target_include_directories(nw_export PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/export)
     target_link_libraries(nw_export PUBLIC nw_db nw_core nw_httplib)
 
@@ -127,7 +130,7 @@ if(NW_WITH_DB)
 
     # The daemon records to the database and serves the API, so it needs the DB layer.
     add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)
-    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db nw_api nw_weather Threads::Threads)
+    target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db nw_api nw_weather nw_export Threads::Threads)
 endif()
 
 # ---- Install rules ----
@@ -179,6 +182,10 @@ if(NW_BUILD_TESTS)
         add_executable(gdrive_test tests/gdrive_test.cpp)
         target_link_libraries(gdrive_test PRIVATE nw_export OpenSSL::Crypto)
         add_test(NAME gdrive_test COMMAND gdrive_test)
+
+        add_executable(timeutil_test tests/timeutil_test.cpp)
+        target_link_libraries(timeutil_test PRIVATE nw_export)
+        add_test(NAME timeutil_test COMMAND timeutil_test)
     endif()
 
     # Software SQM simulator (TCP) for local end-to-end testing without hardware.
