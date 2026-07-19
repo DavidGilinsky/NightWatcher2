@@ -29,8 +29,8 @@ port = 8080
 bind = 127.0.0.1
 # Path to schema.sql, used by POST /api/v1/db/init to create any missing tables.
 schema_file = /usr/share/nightwatcher/schema.sql
-# Static web UI directory, served at / (set once the UI is installed).
-# web_root = /usr/share/nightwatcher/web
+# Static web UI directory, served at /.
+web_root = /usr/share/nightwatcher/web
 # Writes require an admin login session (an 'admin'/'admin' account is seeded on first
 # start; change the password). An optional static token for scripts may be set via
 # NW_API_TOKEN (never stored here).

@@ -117,6 +117,7 @@ install(FILES config/nightwatcher.conf.example
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
 install(FILES sql/schema.sql sql/setup.sql
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
+install(DIRECTORY web/ DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher/web)
 install(FILES config/systemd/nightwatcherd.service
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system)
 

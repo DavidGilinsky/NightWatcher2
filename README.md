@@ -28,7 +28,7 @@ that data through an API and a web UI.
 | Database | MariaDB store (libmariadb) for readings + configuration/calibration history | Done (M2) |
 | `nwdb` | CLI to register sensors, poll an SQM into the database, and query readings | Done (M2) |
 | REST API | Embedded HTTP server (JSON): CRUD, query, DB setup/maintenance, live poll/discover | Core done (M4) |
-| Web UI | Status dashboard, configuration, query, time-series graph | Planned (M5) |
+| Web UI | Login, status dashboard, sensor/weather config, query, time-series graph, users, DB maintenance | Done (M5) |
 
 ## Building
 
@@ -181,6 +181,15 @@ Copy [`config/nightwatcher.conf.example`](config/nightwatcher.conf.example) to
 `/etc/nightwatcher/nightwatcher.conf`. It configures only the daemon itself (database
 connection + API); **sensors are registered in the database** with `nwdb add-sensor` (or the
 API), and each sensor's cadence is its `poll_interval_s`.
+
+## Web UI
+
+With `web_root` set (default `/usr/share/nightwatcher/web`), the daemon serves a browser UI at
+`http://<host>:<api-port>/` — static HTML/JS (dark theme, uPlot graph, no external CDNs) talking to
+the API. It provides a login page (default `admin`/`admin`, must-change on first login), a live
+status **dashboard**, **sensor** and **weather-station** management, a readings **query with a
+time-series graph**, an **events** log, **user** management, and **database** maintenance
+(schema status/init, pruning). Admin-only controls are hidden for `viewer` accounts.
 
 ## Running the daemon
 
