@@ -130,6 +130,23 @@ struct EventRow {
     std::string detail;
 };
 
+// A web-UI / API user.
+struct UserRow {
+    long long id = 0;
+    std::string username;
+    std::string password_hash;        // pbkdf2_sha256$...
+    std::string role;                 // "admin" | "viewer"
+    bool must_change_password = false;
+    std::string created_at;
+};
+
+// The user behind a valid session.
+struct SessionInfo {
+    long long user_id = 0;
+    std::string username;
+    std::string role;
+};
+
 struct ReadingRow {
     long long id = 0;
     std::string sensor_id;
@@ -191,6 +208,21 @@ public:
     // --- Schema ---
     std::vector<TableCount> schema_status();          // known tables + row counts
     void run_schema_script(const std::string& sql);   // execute a multi-statement SQL script
+
+    // --- Users & sessions (web-UI / API authentication) ---
+    long long count_users();
+    void create_user(const std::string& username, const std::string& password_hash,
+                     const std::string& role, bool must_change_password);
+    std::optional<UserRow> find_user(const std::string& username);
+    std::vector<UserRow> users();
+    bool set_user_password(const std::string& username, const std::string& password_hash,
+                          bool must_change_password);
+    bool delete_user(const std::string& username);
+
+    void create_session(const std::string& token, long long user_id, int ttl_seconds);
+    std::optional<SessionInfo> validate_session(const std::string& token);
+    void delete_session(const std::string& token);
+    void delete_expired_sessions();
 
     // Insert a reading. If ts_utc is empty the database clock (UTC) is used.
     // Returns the new row id, or 0 if a row for (sensor_id, ts_utc) already

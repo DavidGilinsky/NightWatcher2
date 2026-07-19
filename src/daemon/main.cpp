@@ -12,8 +12,10 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -24,6 +26,7 @@
 #include "http_server.hpp"
 #include "logging.hpp"
 #include "nightwatcher/version.hpp"
+#include "password.hpp"
 #include "scheduler.hpp"
 
 using nightwatcher::ApiConfig;
@@ -117,6 +120,33 @@ int main(int argc, char** argv) {
     }
     log_info(std::string("nightwatcherd ") + NIGHTWATCHER_VERSION + " starting (db " +
              db_cfg.user + "@" + db_cfg.host + "/" + db_cfg.database + ")");
+
+    // Ensure the schema exists (idempotent) if a schema file is configured.
+    if (!cfg.schema_file.empty()) {
+        try {
+            std::ifstream in(cfg.schema_file);
+            if (in) {
+                std::stringstream ss;
+                ss << in.rdbuf();
+                db::Database dbh(db_cfg);
+                dbh.run_schema_script(ss.str());
+            }
+        } catch (const std::exception& e) {
+            log_warn(std::string("schema ensure failed: ") + e.what());
+        }
+    }
+    // Seed the initial admin user if there are none yet.
+    try {
+        db::Database dbh(db_cfg);
+        if (dbh.count_users() == 0) {
+            dbh.create_user("admin", nightwatcher::auth::hash_password("admin"), "admin", true);
+            log_warn("seeded default admin user 'admin' / 'admin' \xe2\x80\x94 change the password "
+                     "after first login");
+        }
+    } catch (const std::exception& e) {
+        log_warn(std::string("could not ensure admin user (run schema.sql or POST /db/init): ") +
+                 e.what());
+    }
 
     // Start the HTTP/JSON API (shared with the web UI). It reads the database per
     // request, so it keeps running across sensor-list reloads.

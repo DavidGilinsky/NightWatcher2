@@ -153,3 +153,28 @@ CREATE TABLE IF NOT EXISTS weather_readings (
     CONSTRAINT fk_weather_station FOREIGN KEY (station_id)
         REFERENCES weather_stations (id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+-- Web-UI / API users. Passwords are stored as PBKDF2-HMAC-SHA256 (salted); the
+-- daemon seeds an 'admin' account on first start if this table is empty.
+CREATE TABLE IF NOT EXISTS users (
+    id                   BIGINT      NOT NULL AUTO_INCREMENT,
+    username             VARCHAR(64) NOT NULL,
+    password_hash        VARCHAR(255) NOT NULL,   -- pbkdf2_sha256$iters$salt$hash
+    role                 ENUM('admin','viewer') NOT NULL DEFAULT 'admin',
+    must_change_password TINYINT(1)  NOT NULL DEFAULT 0,
+    created_at           DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_users_username (username)
+) ENGINE=InnoDB;
+
+-- Login sessions. token is a random hex string stored in a cookie.
+CREATE TABLE IF NOT EXISTS sessions (
+    token      CHAR(64) NOT NULL,
+    user_id    BIGINT   NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,
+    PRIMARY KEY (token),
+    KEY idx_sessions_user (user_id),
+    CONSTRAINT fk_sessions_user FOREIGN KEY (user_id)
+        REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB;

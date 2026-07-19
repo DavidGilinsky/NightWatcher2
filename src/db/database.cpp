@@ -467,7 +467,8 @@ std::vector<TableCount> Database::schema_status() {
 
     static const char* const kKnown[] = {"sensors",          "readings",
                                          "config_log",       "events",
-                                         "weather_stations", "weather_readings"};
+                                         "weather_stations", "weather_readings",
+                                         "users",            "sessions"};
     std::vector<TableCount> out;
     for (const char* t : kKnown) {
         TableCount tc;
@@ -515,6 +516,119 @@ void Database::run_schema_script(const std::string& sql) {
         }
     }
     flush();
+}
+
+namespace {
+
+UserRow user_from_row(MYSQL_ROW row) {
+    UserRow u;
+    u.id = row[0] ? std::atoll(row[0]) : 0;
+    u.username = row[1] ? row[1] : "";
+    u.password_hash = row[2] ? row[2] : "";
+    u.role = row[3] ? row[3] : "";
+    u.must_change_password = row[4] && std::atoi(row[4]) != 0;
+    u.created_at = row[5] ? row[5] : "";
+    return u;
+}
+
+const char* const kUserCols = "id, username, password_hash, role, must_change_password, created_at";
+
+}  // namespace
+
+long long Database::count_users() {
+    exec("SELECT COUNT(*) FROM users");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    long long n = 0;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) n = row[0] ? std::atoll(row[0]) : 0;
+    mysql_free_result(res);
+    return n;
+}
+
+void Database::create_user(const std::string& username, const std::string& password_hash,
+                           const std::string& role, bool must_change_password) {
+    std::ostringstream q;
+    q << "INSERT INTO users (username, password_hash, role, must_change_password) VALUES ('"
+      << esc(username) << "', '" << esc(password_hash) << "', '" << esc(role) << "', "
+      << (must_change_password ? 1 : 0) << ")";
+    exec(q.str());
+}
+
+std::optional<UserRow> Database::find_user(const std::string& username) {
+    std::ostringstream q;
+    q << "SELECT " << kUserCols << " FROM users WHERE username='" << esc(username) << "' LIMIT 1";
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::optional<UserRow> out;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) out = user_from_row(row);
+    mysql_free_result(res);
+    return out;
+}
+
+std::vector<UserRow> Database::users() {
+    exec(std::string("SELECT ") + kUserCols + " FROM users ORDER BY username");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::vector<UserRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) out.push_back(user_from_row(row));
+    mysql_free_result(res);
+    return out;
+}
+
+bool Database::set_user_password(const std::string& username, const std::string& password_hash,
+                                 bool must_change_password) {
+    if (!find_user(username)) return false;
+    std::ostringstream q;
+    q << "UPDATE users SET password_hash='" << esc(password_hash) << "', must_change_password="
+      << (must_change_password ? 1 : 0) << " WHERE username='" << esc(username) << "'";
+    exec(q.str());
+    return true;
+}
+
+bool Database::delete_user(const std::string& username) {
+    std::ostringstream q;
+    q << "DELETE FROM users WHERE username='" << esc(username) << "'";
+    exec(q.str());
+    return mysql_affected_rows(impl_->conn) > 0;
+}
+
+void Database::create_session(const std::string& token, long long user_id, int ttl_seconds) {
+    std::ostringstream q;
+    q << "INSERT INTO sessions (token, user_id, expires_at) VALUES ('" << esc(token) << "', "
+      << user_id << ", UTC_TIMESTAMP() + INTERVAL " << ttl_seconds << " SECOND)";
+    exec(q.str());
+}
+
+std::optional<SessionInfo> Database::validate_session(const std::string& token) {
+    std::ostringstream q;
+    q << "SELECT u.id, u.username, u.role FROM sessions s JOIN users u ON u.id = s.user_id "
+         "WHERE s.token='"
+      << esc(token) << "' AND s.expires_at > UTC_TIMESTAMP() LIMIT 1";
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::optional<SessionInfo> out;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) {
+        SessionInfo si;
+        si.user_id = row[0] ? std::atoll(row[0]) : 0;
+        si.username = row[1] ? row[1] : "";
+        si.role = row[2] ? row[2] : "";
+        out = si;
+    }
+    mysql_free_result(res);
+    return out;
+}
+
+void Database::delete_session(const std::string& token) {
+    std::ostringstream q;
+    q << "DELETE FROM sessions WHERE token='" << esc(token) << "'";
+    exec(q.str());
+}
+
+void Database::delete_expired_sessions() {
+    exec("DELETE FROM sessions WHERE expires_at <= UTC_TIMESTAMP()");
 }
 
 }  // namespace nightwatcher::db

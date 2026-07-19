@@ -17,6 +17,7 @@
 #include "http_server.hpp"
 #include "httplib.h"
 #include "nlohmann/json.hpp"
+#include "password.hpp"
 
 using json = nlohmann::json;
 using nightwatcher::ApiConfig;
@@ -107,6 +108,49 @@ int main() {
     CHECK(r && r->status == 200);
     r = cli.Get("/api/v1/sensors/APITEST");
     CHECK(r && r->status == 404);
+
+    // ---- login flow ----
+    {
+        db::Database d(cfg.db);
+        d.delete_user("apiadmin");
+        d.create_user("apiadmin", nightwatcher::auth::hash_password("secret"), "admin", false);
+    }
+    // Bad password is rejected.
+    r = cli.Post("/api/v1/login", R"({"username":"apiadmin","password":"wrong"})", "application/json");
+    CHECK(r && r->status == 401);
+    // Good password logs in and returns a session token.
+    r = cli.Post("/api/v1/login", R"({"username":"apiadmin","password":"secret"})", "application/json");
+    CHECK(r && r->status == 200);
+    std::string sess;
+    if (r && r->status == 200) {
+        const json j = json::parse(r->body);
+        sess = j["token"].get<std::string>();
+        CHECK(j["user"]["role"] == "admin");
+    }
+    const httplib::Headers sauth = {{"Authorization", "Bearer " + sess}};
+    // /me reflects the logged-in user.
+    r = cli.Get("/api/v1/me", sauth);
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) {
+        const json j = json::parse(r->body);
+        CHECK(j["username"] == "apiadmin");
+        CHECK(j["via"] == "session");
+    }
+    // The session authorizes a write.
+    r = cli.Post("/api/v1/sensors", sauth,
+                 R"({"id":"APITEST2","tcp":"127.0.0.1:1","probe":false})", "application/json");
+    CHECK(r && r->status == 201);
+    r = cli.Delete("/api/v1/sensors/APITEST2", sauth);
+    CHECK(r && r->status == 200);
+    // Logout invalidates the session.
+    r = cli.Post("/api/v1/logout", sauth, "", "application/json");
+    CHECK(r && r->status == 200);
+    r = cli.Get("/api/v1/me", sauth);
+    CHECK(r && r->status == 401);
+    {
+        db::Database d(cfg.db);
+        d.delete_user("apiadmin");
+    }
 
     server.stop();
 

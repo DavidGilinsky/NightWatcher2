@@ -24,6 +24,7 @@
 #include "logging.hpp"
 #include "nightwatcher/version.hpp"
 #include "nlohmann/json.hpp"
+#include "password.hpp"
 #include "sqm_device.hpp"
 #include "tcp_transport.hpp"
 
@@ -177,13 +178,57 @@ void probe_fill(db::SensorFields& f) {
     }
 }
 
-bool require_auth(const httplib::Request& req, httplib::Response& res, const std::string& token) {
-    if (token.empty()) {
-        send_err(res, 503, "write operations disabled: set NW_API_TOKEN");
-        return false;
+std::string get_cookie(const httplib::Request& req, const std::string& name) {
+    const std::string c = req.get_header_value("Cookie");
+    size_t pos = 0;
+    while (pos < c.size()) {
+        const size_t eq = c.find('=', pos);
+        if (eq == std::string::npos) break;
+        size_t ks = c.find_first_not_of(" \t", pos);
+        if (ks == std::string::npos) ks = pos;
+        const std::string key = c.substr(ks, eq - ks);
+        const size_t semi = c.find(';', eq);
+        const std::string val =
+            c.substr(eq + 1, (semi == std::string::npos ? c.size() : semi) - eq - 1);
+        if (key == name) return val;
+        if (semi == std::string::npos) break;
+        pos = semi + 1;
     }
+    return std::string();
+}
+
+// Session token from the nw_session cookie or an Authorization: Bearer header.
+std::string session_token(const httplib::Request& req) {
+    std::string sess = get_cookie(req, "nw_session");
+    if (sess.empty()) {
+        const std::string h = req.get_header_value("Authorization");
+        if (h.rfind("Bearer ", 0) == 0) sess = h.substr(7);
+    }
+    return sess;
+}
+
+// Authorize a write request via the static API token (admin) or a valid login
+// session. Sends the error response and returns false when not authorized.
+bool require_auth(const httplib::Request& req, httplib::Response& res, const std::string& token,
+                  const db::DbConfig& dbc, bool need_admin = false) {
     const std::string h = req.get_header_value("Authorization");
-    if (h == token || h == "Bearer " + token) return true;
+    if (!token.empty() && (h == token || h == "Bearer " + token)) {
+        return true;  // the static token acts as admin
+    }
+    const std::string sess = session_token(req);
+    if (!sess.empty()) {
+        try {
+            db::Database db(dbc);
+            if (const auto si = db.validate_session(sess)) {
+                if (need_admin && si->role != "admin") {
+                    send_err(res, 403, "admin role required");
+                    return false;
+                }
+                return true;
+            }
+        } catch (const std::exception&) {
+        }
+    }
     send_err(res, 401, "unauthorized");
     return false;
 }
@@ -301,7 +346,7 @@ void HttpServer::start() {
 
     // ---- write endpoints (token required) ----
     srv.Post("/api/v1/sensors", [dbc, token](const httplib::Request& req, httplib::Response& res) {
-        if (!require_auth(req, res, token)) return;
+        if (!require_auth(req, res, token, dbc, true)) return;
         json body;
         try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
         if (!body.contains("id")) { send_err(res, 400, "missing 'id'"); return; }
@@ -321,7 +366,7 @@ void HttpServer::start() {
         } catch (const std::exception& e) { send_err(res, 500, e.what()); }
     });
     srv.Patch(R"(/api/v1/sensors/([^/]+))", [dbc, token](const httplib::Request& req, httplib::Response& res) {
-        if (!require_auth(req, res, token)) return;
+        if (!require_auth(req, res, token, dbc, true)) return;
         json body;
         try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
         try {
@@ -336,7 +381,7 @@ void HttpServer::start() {
     });
     srv.Delete(R"(/api/v1/sensors/([^/]+)/readings)",
                [dbc, token](const httplib::Request& req, httplib::Response& res) {
-                   if (!require_auth(req, res, token)) return;
+                   if (!require_auth(req, res, token, dbc, true)) return;
                    if (!req.has_param("before")) {
                        send_err(res, 400, "missing 'before' (YYYY-MM-DD[ HH:MM:SS])");
                        return;
@@ -349,7 +394,7 @@ void HttpServer::start() {
                    } catch (const std::exception& e) { send_err(res, 500, e.what()); }
                });
     srv.Delete(R"(/api/v1/sensors/([^/]+))", [dbc, token](const httplib::Request& req, httplib::Response& res) {
-        if (!require_auth(req, res, token)) return;
+        if (!require_auth(req, res, token, dbc, true)) return;
         try {
             db::Database db(dbc);
             db.remove_sensor(req.matches[1]);
@@ -358,7 +403,7 @@ void HttpServer::start() {
     });
     srv.Post(R"(/api/v1/sensors/([^/]+)/poll)",
              [dbc, token](const httplib::Request& req, httplib::Response& res) {
-                 if (!require_auth(req, res, token)) return;
+                 if (!require_auth(req, res, token, dbc, true)) return;
                  try {
                      db::Database db(dbc);
                      const auto s = db.find_sensor(req.matches[1]);
@@ -381,7 +426,7 @@ void HttpServer::start() {
                  } catch (const std::exception& e) { send_err(res, 502, e.what()); }
              });
     srv.Post("/api/v1/weather-stations", [dbc, token](const httplib::Request& req, httplib::Response& res) {
-        if (!require_auth(req, res, token)) return;
+        if (!require_auth(req, res, token, dbc, true)) return;
         json body;
         try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
         if (!body.contains("id")) { send_err(res, 400, "missing 'id'"); return; }
@@ -395,7 +440,7 @@ void HttpServer::start() {
     });
     srv.Patch(R"(/api/v1/weather-stations/([^/]+))",
               [dbc, token](const httplib::Request& req, httplib::Response& res) {
-                  if (!require_auth(req, res, token)) return;
+                  if (!require_auth(req, res, token, dbc, true)) return;
                   json body;
                   try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
                   try {
@@ -410,7 +455,7 @@ void HttpServer::start() {
               });
     srv.Delete(R"(/api/v1/weather-stations/([^/]+))",
                [dbc, token](const httplib::Request& req, httplib::Response& res) {
-                   if (!require_auth(req, res, token)) return;
+                   if (!require_auth(req, res, token, dbc, true)) return;
                    try {
                        db::Database db(dbc);
                        db.remove_weather_station(req.matches[1]);
@@ -418,7 +463,7 @@ void HttpServer::start() {
                    } catch (const std::exception& e) { send_err(res, 500, e.what()); }
                });
     srv.Post("/api/v1/db/init", [dbc, token, schema_file](const httplib::Request& req, httplib::Response& res) {
-        if (!require_auth(req, res, token)) return;
+        if (!require_auth(req, res, token, dbc, true)) return;
         if (schema_file.empty()) { send_err(res, 503, "schema_file not configured"); return; }
         std::ifstream in(schema_file);
         if (!in) { send_err(res, 500, "cannot open schema file: " + schema_file); return; }
@@ -433,13 +478,146 @@ void HttpServer::start() {
         } catch (const std::exception& e) { send_err(res, 500, e.what()); }
     });
 
+    // ---- authentication ----
+    srv.Post("/api/v1/login", [dbc](const httplib::Request& req, httplib::Response& res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+        if (!body.contains("username") || !body.contains("password")) {
+            send_err(res, 400, "username and password required");
+            return;
+        }
+        try {
+            db::Database db(dbc);
+            const auto u = db.find_user(body["username"].get<std::string>());
+            if (!u || !auth::verify_password(body["password"].get<std::string>(), u->password_hash)) {
+                send_err(res, 401, "invalid credentials");
+                return;
+            }
+            const std::string sess = auth::random_hex(32);
+            const int ttl = 7 * 24 * 3600;
+            db.create_session(sess, u->id, ttl);
+            res.set_header("Set-Cookie", "nw_session=" + sess +
+                                             "; HttpOnly; SameSite=Strict; Path=/; Max-Age=" +
+                                             std::to_string(ttl));
+            send(res, 200,
+                 json{{"token", sess},
+                      {"user", {{"username", u->username}, {"role", u->role}}},
+                      {"must_change_password", u->must_change_password}});
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Post("/api/v1/logout", [dbc](const httplib::Request& req, httplib::Response& res) {
+        const std::string sess = session_token(req);
+        try {
+            if (!sess.empty()) {
+                db::Database db(dbc);
+                db.delete_session(sess);
+            }
+        } catch (const std::exception&) {
+        }
+        res.set_header("Set-Cookie", "nw_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+        send(res, 200, json{{"ok", true}});
+    });
+    srv.Get("/api/v1/me", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+        const std::string h = req.get_header_value("Authorization");
+        if (!token.empty() && (h == token || h == "Bearer " + token)) {
+            send(res, 200, json{{"username", "(token)"}, {"role", "admin"}, {"via", "token"}});
+            return;
+        }
+        const std::string sess = session_token(req);
+        if (!sess.empty()) {
+            try {
+                db::Database db(dbc);
+                if (const auto si = db.validate_session(sess)) {
+                    send(res, 200,
+                         json{{"username", si->username}, {"role", si->role}, {"via", "session"}});
+                    return;
+                }
+            } catch (const std::exception&) {
+            }
+        }
+        send_err(res, 401, "not logged in");
+    });
+    srv.Post("/api/v1/me/password", [dbc](const httplib::Request& req, httplib::Response& res) {
+        json body;
+        try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+        if (!body.contains("current_password") || !body.contains("new_password")) {
+            send_err(res, 400, "current_password and new_password required");
+            return;
+        }
+        const std::string sess = session_token(req);
+        try {
+            db::Database db(dbc);
+            const auto si = sess.empty() ? std::optional<db::SessionInfo>{} : db.validate_session(sess);
+            if (!si) { send_err(res, 401, "not logged in"); return; }
+            const auto u = db.find_user(si->username);
+            if (!u ||
+                !auth::verify_password(body["current_password"].get<std::string>(), u->password_hash)) {
+                send_err(res, 403, "current password is incorrect");
+                return;
+            }
+            db.set_user_password(si->username,
+                                 auth::hash_password(body["new_password"].get<std::string>()), false);
+            send(res, 200, json{{"ok", true}});
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Get("/api/v1/users", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+        if (!require_auth(req, res, token, dbc, true)) return;
+        try {
+            db::Database db(dbc);
+            json arr = json::array();
+            for (const auto& u : db.users()) {
+                arr.push_back(json{{"id", u.id},
+                                   {"username", u.username},
+                                   {"role", u.role},
+                                   {"must_change_password", u.must_change_password},
+                                   {"created_at", u.created_at}});
+            }
+            send(res, 200, arr);
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Post("/api/v1/users", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+        if (!require_auth(req, res, token, dbc, true)) return;
+        json body;
+        try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+        if (!body.contains("username") || !body.contains("password")) {
+            send_err(res, 400, "username and password required");
+            return;
+        }
+        const std::string role = body.contains("role") ? body["role"].get<std::string>() : "viewer";
+        try {
+            db::Database db(dbc);
+            const std::string uname = body["username"].get<std::string>();
+            if (db.find_user(uname)) { send_err(res, 409, "user already exists"); return; }
+            db.create_user(uname, auth::hash_password(body["password"].get<std::string>()), role, false);
+            send(res, 201, json{{"username", uname}, {"role", role}});
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Delete(R"(/api/v1/users/([^/]+))", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+        if (!require_auth(req, res, token, dbc, true)) return;
+        const std::string uname = req.matches[1];
+        try {
+            db::Database db(dbc);
+            const auto u = db.find_user(uname);
+            if (!u) { send_err(res, 404, "no such user"); return; }
+            if (u->role == "admin") {
+                int admins = 0;
+                for (const auto& x : db.users()) {
+                    if (x.role == "admin") ++admins;
+                }
+                if (admins <= 1) { send_err(res, 409, "cannot delete the last admin"); return; }
+            }
+            db.delete_user(uname);
+            send(res, 200, json{{"deleted", uname}});
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+
     if (!srv.bind_to_port(impl_->cfg.bind.c_str(), impl_->cfg.port)) {
         throw std::runtime_error("cannot bind API to " + impl_->cfg.bind + ":" +
                                  std::to_string(impl_->cfg.port));
     }
     impl_->thread = std::thread([&srv]() { srv.listen_after_bind(); });
     log_info("API listening on http://" + impl_->cfg.bind + ":" + std::to_string(impl_->cfg.port) +
-             (token.empty() ? " (writes disabled: NW_API_TOKEN unset)" : " (token auth on writes)"));
+             (token.empty() ? " (writes require login)" : " (writes require login or the API token)"));
 }
 
 void HttpServer::stop() {

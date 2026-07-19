@@ -140,9 +140,22 @@ nwdb cal DSN003                       # read + store calibration
 ## API
 
 `nightwatcherd` serves a JSON API on `[api] bind:port` (default `127.0.0.1:8080`), sharing
-the same `nw_db` layer as `nwdb` — so the web UI (M5) drives the same code. Read endpoints
-are open; **write endpoints require `NW_API_TOKEN`** (sent as `Authorization: Bearer <token>`)
-and are disabled until it is set.
+the same `nw_db` layer as `nwdb` — so the web UI drives the same code. **Reads are open**
+(sensor data is public); **writes require an `admin` login session** or the optional static
+`NW_API_TOKEN`. On first start the daemon seeds an `admin` account (password `admin`, flagged
+must-change).
+
+Log in (cookie-based sessions), then use the cookie — or the token the login returns — for writes:
+
+```sh
+curl -s -c jar -X POST localhost:8080/api/v1/login -d '{"username":"admin","password":"admin"}'
+curl -s -b jar localhost:8080/api/v1/me
+curl -s -b jar -X POST localhost:8080/api/v1/me/password -d '{"current_password":"admin","new_password":"s3cret"}'
+curl -s -b jar -X POST localhost:8080/api/v1/users -d '{"username":"obs","password":"pw","role":"viewer"}'
+```
+
+Roles: `admin` (full access + user management) and `viewer` (read-only). Alternatively, a static
+token for scripts:
 
 ```sh
 export NW_API_TOKEN=$(openssl rand -hex 16)

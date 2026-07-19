@@ -31,5 +31,6 @@ bind = 127.0.0.1
 schema_file = /usr/share/nightwatcher/schema.sql
 # Static web UI directory, served at / (set once the UI is installed).
 # web_root = /usr/share/nightwatcher/web
-# The API token for write endpoints is read from NW_API_TOKEN (never stored here);
-# writes are disabled until it is set.
+# Writes require an admin login session (an 'admin'/'admin' account is seeded on first
+# start; change the password). An optional static token for scripts may be set via
+# NW_API_TOKEN (never stored here).

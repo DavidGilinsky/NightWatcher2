@@ -168,7 +168,7 @@ int main() {
 
         // Schema status reports the six known tables, sensors present.
         const auto st = dbh.schema_status();
-        CHECK(st.size() == 6);
+        CHECK(st.size() == 8);
         bool sensors_present = false;
         for (const auto& tc : st) {
             if (tc.table == "sensors") sensors_present = tc.present;

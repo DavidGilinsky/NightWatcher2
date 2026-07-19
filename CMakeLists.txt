@@ -73,6 +73,12 @@ target_link_libraries(sqmctl PRIVATE nw_sqm)
 if(NW_WITH_DB)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MARIADB REQUIRED libmariadb)
+    find_package(OpenSSL REQUIRED)
+
+    # ---- Auth / crypto (PBKDF2 password hashing + random tokens via OpenSSL) ----
+    add_library(nw_auth STATIC src/auth/password.cpp)
+    target_include_directories(nw_auth PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/auth)
+    target_link_libraries(nw_auth PUBLIC nw_warnings OpenSSL::Crypto)
 
     add_library(nw_db STATIC src/db/database.cpp)
     target_include_directories(nw_db PUBLIC
@@ -94,7 +100,7 @@ if(NW_WITH_DB)
     target_include_directories(nw_api SYSTEM PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party/httplib)
-    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core Threads::Threads)
+    target_link_libraries(nw_api PUBLIC nw_db nw_sqm nw_core nw_auth Threads::Threads)
 
     # The daemon records to the database and serves the API, so it needs the DB layer.
     add_executable(nightwatcherd src/daemon/main.cpp src/daemon/scheduler.cpp)
@@ -108,6 +114,8 @@ if(NW_WITH_DB)
     install(TARGETS nightwatcherd nwdb RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(FILES config/nightwatcher.conf.example
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
+install(FILES sql/schema.sql sql/setup.sql
     DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
 install(FILES config/systemd/nightwatcherd.service
     DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system)
