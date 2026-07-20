@@ -76,7 +76,7 @@ function moonGlyph(date) {
   return ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'][Math.round(phase * 8) % 8];
 }
 
-function drawGraph(container, readings, sensor) {
+function drawGraph(container, readings, sensor, opts) {
   const rs = [...readings].reverse();  // API returns newest-first
   const xs = rs.map(r => Date.parse(r.ts_utc.replace(' ', 'T') + 'Z') / 1000);
   const mag = rs.map(r => r.mag_arcsec2);
@@ -97,59 +97,64 @@ function drawGraph(container, readings, sensor) {
   const hooks = {};
 
   // Sun/Moon altitude are a pure function of time + observer location, so the
-  // overlay just needs the sensor's coordinates and SunCalc. Skipped silently
-  // when either is unavailable.
+  // overlay just needs the sensor's coordinates and SunCalc. Each line is opt-in
+  // via `opts` (default on) and skipped silently when coordinates are missing.
   const lat = sensor ? Number(sensor.latitude) : NaN;
   const lon = sensor ? Number(sensor.longitude) : NaN;
   const haveEphem = typeof SunCalc !== 'undefined' && sensor &&
     sensor.latitude != null && sensor.longitude != null &&
     Number.isFinite(lat) && Number.isFinite(lon);
-  if (haveEphem) {
+  const wantSun = haveEphem && (!opts || opts.sun !== false);
+  const wantMoon = haveEphem && (!opts || opts.moon !== false);
+  if (wantSun || wantMoon) {
     const deg = 180 / Math.PI;
-    // eslint-disable-next-line no-undef
-    const sunAlt = xs.map(x => SunCalc.getPosition(new Date(x * 1000), lat, lon).altitude * deg);
-    // eslint-disable-next-line no-undef
-    const moonAlt = xs.map(x => SunCalc.getMoonPosition(new Date(x * 1000), lat, lon).altitude * deg);
-    data.push(sunAlt, moonAlt);
-    series.push(
-      { label: 'sun alt°', stroke: '#ffcf5c', width: 1, dash: [5, 3], scale: 'alt', points: { show: false } },
-      { label: 'moon alt°', stroke: '#c8d2ea', width: 1, dash: [5, 3], scale: 'alt', points: { show: false } },
-    );
     scales.alt = {};  // auto-range in degrees
     axes.push({
       scale: 'alt', side: 1, stroke: '#8fa0c0', grid: { show: false },
       values: (u, vals) => vals.map(v => v + '°'),
     });
-    const moonIdx = data.length - 1;  // moon altitude is the last series
-    // A moon-phase glyph riding on the moon line at its highest point.
-    hooks.draw = [(u) => {
-      const moon = u.data[moonIdx];
-      let mi = -1, mv = -Infinity;
-      for (let i = 0; i < moon.length; i++) {
-        if (moon[i] != null && moon[i] > mv) { mv = moon[i]; mi = i; }
-      }
-      if (mi < 0) return;
-      const dpr = u.pxRatio || 1;
-      const px = u.valToPos(u.data[0][mi], 'x', true);
-      const py = u.valToPos(mv, 'alt', true);
-      const ctx = u.ctx;
-      ctx.save();
-      ctx.fillStyle = '#dfe6f5';
-      ctx.font = (15 * dpr) + 'px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(moonGlyph(new Date(u.data[0][mi] * 1000)), px, py - 3 * dpr);
-      ctx.restore();
-    }];
+    if (wantSun) {
+      // eslint-disable-next-line no-undef
+      const sunAlt = xs.map(x => SunCalc.getPosition(new Date(x * 1000), lat, lon).altitude * deg);
+      data.push(sunAlt);
+      series.push({ label: 'sun alt°', stroke: '#ffcf5c', width: 1, dash: [5, 3], scale: 'alt', points: { show: false } });
+    }
+    if (wantMoon) {
+      // eslint-disable-next-line no-undef
+      const moonAlt = xs.map(x => SunCalc.getMoonPosition(new Date(x * 1000), lat, lon).altitude * deg);
+      data.push(moonAlt);
+      series.push({ label: 'moon alt°', stroke: '#c8d2ea', width: 1, dash: [5, 3], scale: 'alt', points: { show: false } });
+      const moonIdx = data.length - 1;  // moon altitude is the last series pushed
+      // A moon-phase glyph riding on the moon line at its highest point.
+      hooks.draw = [(u) => {
+        const moon = u.data[moonIdx];
+        let mi = -1, mv = -Infinity;
+        for (let i = 0; i < moon.length; i++) {
+          if (moon[i] != null && moon[i] > mv) { mv = moon[i]; mi = i; }
+        }
+        if (mi < 0) return;
+        const dpr = u.pxRatio || 1;
+        const px = u.valToPos(u.data[0][mi], 'x', true);
+        const py = u.valToPos(mv, 'alt', true);
+        const ctx = u.ctx;
+        ctx.save();
+        ctx.fillStyle = '#dfe6f5';
+        ctx.font = (15 * dpr) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(moonGlyph(new Date(u.data[0][mi] * 1000)), px, py - 3 * dpr);
+        ctx.restore();
+      }];
+    }
   }
 
-  const opts = {
+  const uplotOpts = {
     width: Math.max(320, container.clientWidth - 20), height: 320,
     scales, series, axes, hooks,
   };
   container.innerHTML = '';
   // eslint-disable-next-line no-undef
-  new uPlot(opts, data, container);
+  new uPlot(uplotOpts, data, container);
 }
 
 function drawWeatherGraph(container, readings) {
@@ -680,6 +685,30 @@ async function viewQuery() {
   const caption = el('div', { class: 'muted', style: 'margin:.4rem 0' });
   const tblWrap = el('div', { class: 'tablebox', style: 'margin-top:1rem' });
 
+  // Sun/Moon overlay toggles — persisted, and applied to sensor graphs only.
+  const overlayPref = {
+    sun: localStorage.getItem('nw_overlay_sun') !== '0',
+    moon: localStorage.getItem('nw_overlay_moon') !== '0',
+  };
+  let lastSensorGraph = null;  // { readings, sensor } backing the current sensor graph
+  const redrawOverlay = () => {
+    if (lastSensorGraph) {
+      drawGraph(chart, lastSensorGraph.readings, lastSensorGraph.sensor,
+        { sun: overlayPref.sun, moon: overlayPref.moon });
+    }
+  };
+  const overlayChk = (key, label) => el('label', { style: 'display:inline-flex;align-items:center;gap:.3rem' },
+    el('input', {
+      type: 'checkbox', ...(overlayPref[key] ? { checked: 'checked' } : {}),
+      onchange: (e) => {
+        overlayPref[key] = e.target.checked;
+        localStorage.setItem('nw_overlay_' + key, e.target.checked ? '1' : '0');
+        redrawOverlay();
+      },
+    }), label);
+  const overlayWrap = el('span', { class: 'row', style: 'gap:.5rem' },
+    el('span', { class: 'muted' }, 'Overlay'), overlayChk('sun', 'Sun'), overlayChk('moon', 'Moon'));
+
   const toUtc = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   const rangeParams = () => {
     let from = '', to = '';
@@ -704,6 +733,7 @@ async function viewQuery() {
       ? `/weather-stations/${encodeURIComponent(id)}/readings`
       : `/sensors/${encodeURIComponent(id)}/readings`;
     try {
+      lastSensorGraph = null;
       const rs = await api('GET', `${path}?${p}`);
       caption.textContent = `${rs.length} reading(s)` + (from ? `  ·  from ${from} UTC` : '') + (to ? `  to ${to} UTC` : '');
       if (!rs.length) { chart.innerHTML = ''; chart.append(el('p', { class: 'muted' }, 'No readings in this range.')); tblWrap.innerHTML = ''; return; }
@@ -719,7 +749,9 @@ async function viewQuery() {
           { label: 'rain mm/h', render: r => fmtNum(r.rain_rate_mmh) },
         ];
       } else {
-        drawGraph(chart, rs, sensors.find(s => s.id === id));
+        const sensor = sensors.find(s => s.id === id);
+        lastSensorGraph = { readings: rs, sensor };
+        drawGraph(chart, rs, sensor, { sun: overlayPref.sun, moon: overlayPref.moon });
         cols = [
           { label: 'Time (UTC)', render: r => r.ts_utc },
           { label: 'mag/arcsec²', render: r => fmtMag(r.mag_arcsec2) },
@@ -746,7 +778,11 @@ async function viewQuery() {
     document.body.append(a); a.click(); a.remove();
   };
   const dsnBtn = el('button', { class: 'btn ghost', onclick: downloadDsn }, 'Download DSN file');
-  const updateDsnBtn = () => { dsnBtn.style.display = sel.value.startsWith('sensor:') ? '' : 'none'; };
+  const updateDsnBtn = () => {
+    const isSensor = sel.value.startsWith('sensor:');
+    dsnBtn.style.display = isSensor ? '' : 'none';
+    overlayWrap.style.display = isSensor ? '' : 'none';
+  };
 
   rangeSel.addEventListener('change', () => {
     customWrap.style.display = rangeSel.value === 'custom' ? '' : 'none';
@@ -758,6 +794,7 @@ async function viewQuery() {
     el('span', { class: 'muted' }, 'Source'), sel,
     el('span', { class: 'muted' }, 'Range'), rangeSel,
     customWrap,
+    overlayWrap,
     el('button', { class: 'btn', onclick: load }, 'Load'),
     dsnBtn));
   updateDsnBtn();
