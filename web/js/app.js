@@ -415,7 +415,7 @@ function sensorForm(s) {
                   if (idInput && !idInput.value && d.serial) idInput.value = 'SQM-' + d.serial;
                 }
               }, 'Use'),
-              el('span', { class: 'muted', style: 'font-size:.85rem' }, `${d.device} — serial ${d.serial}, model ${d.model}`));
+              el('span', { class: 'muted', style: 'font-size:.85rem' }, `${d.device} — serial ${d.serial}, model ${d.model}`)));
           }
         } catch (e) { scanOut.innerHTML = ''; scanOut.append(msg('err', e.message)); }
       }
