@@ -41,9 +41,22 @@ function fmtSchedule(x) {
   const t = x.schedule_time || '';
   if (x.schedule === 'nightly') return `nightly ${t}`.trim();
   if (x.schedule === 'weekly') return `weekly ${NW_DOW[x.schedule_day] || 'Sun'} ${t}`.trim();
-  if (x.schedule === 'monthly') return `monthly day ${x.schedule_day || 1} ${t}`.trim();
+  if (x.schedule === 'monthly') return `monthly ${x.schedule_day === 0 ? 'last day' : 'day ' + (x.schedule_day || 1)} ${t}`.trim();
   if (x.schedule === 'interval') return `every ${x.interval_s || '?'}s`;
   return 'manual';
+}
+
+// Format a UTC "YYYY-MM-DD HH:MM:SS" timestamp in the given IANA timezone (falls
+// back to the browser's local zone), so it matches the schedule's local time.
+function fmtLocalTs(utcSql, tz) {
+  if (!utcSql) return '—';
+  const d = new Date(String(utcSql).replace(' ', 'T') + 'Z');
+  if (isNaN(d.getTime())) return utcSql;
+  try {
+    return d.toLocaleString('sv-SE', { timeZone: tz || undefined, hour12: false });
+  } catch (_) {
+    return d.toLocaleString('sv-SE', { hour12: false });
+  }
 }
 
 function table(cols, rows) {
@@ -994,8 +1007,12 @@ function exportForm(x, sensors) {
     dayLabel.textContent = weekly ? 'Day of week' : 'Day of month';
     const cur = editing && x.schedule_day != null ? Number(x.schedule_day) : (weekly ? 0 : 1);
     daySel.innerHTML = '';
-    if (weekly) DOW.forEach((n, i) => daySel.append(el('option', { value: i, selected: i === cur ? 'selected' : null }, n)));
-    else for (let d = 1; d <= 28; d++) daySel.append(el('option', { value: d, selected: d === cur ? 'selected' : null }, String(d)));
+    if (weekly) {
+      DOW.forEach((n, i) => daySel.append(el('option', { value: i, selected: i === cur ? 'selected' : null }, n)));
+    } else {
+      daySel.append(el('option', { value: 0, selected: cur === 0 ? 'selected' : null }, 'Last day of month'));
+      for (let d = 1; d <= 28; d++) daySel.append(el('option', { value: d, selected: d === cur ? 'selected' : null }, String(d)));
+    }
   };
   g.append(timeField); g.append(dayField); g.append(intervalField);
   const statusSel = el('select', { name: 'status' },
@@ -1095,12 +1112,13 @@ async function viewExports() {
   }
   if (isAdmin()) frag.append(exportForm(editingExport, sensors));
   const rows = await api('GET', '/export-targets');
+  const tzOf = id => { const s = sensors.find(v => v.id === id); return s ? s.timezone : ''; };
   const cols = [
     { label: 'ID', render: x => x.id },
     { label: 'Sensor', render: x => x.sensor_id },
     { label: 'Target', render: x => EXPORT_TARGETS[x.target] || x.target },
     { label: 'Schedule', render: x => fmtSchedule(x) },
-    { label: 'Last export', render: x => x.last_export_ts || '—' },
+    { label: 'Last export (local)', render: x => fmtLocalTs(x.last_export_ts, tzOf(x.sensor_id)) },
     { label: 'Status', render: x => el('span', { class: 'pill ' + (x.status || '') }, x.status) },
   ];
   if (isAdmin()) cols.push({

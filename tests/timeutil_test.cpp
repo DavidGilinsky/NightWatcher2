@@ -81,6 +81,10 @@ int main() {
     CHECK(next_monthly("2026-07-19 04:00:00", 20, 6, 0) == "2026-07-20 13:00:00");  // 20th still ahead
     CHECK(next_monthly("2026-07-19 04:00:00", 18, 6, 0) == "2026-08-18 13:00:00");  // 18th 06:00 passed -> next month
 
+    // "last day of month" sentinel (mday <= 0).
+    CHECK(next_monthly("2026-07-19 04:00:00", 0, 23, 0) == "2026-08-01 06:00:00");  // Jul 31 23:00 local (last day)
+    CHECK(next_monthly("2026-07-31 22:00:00", 0, 6, 0) == "2026-08-31 13:00:00");   // Jul 31 06:00 passed -> Aug 31
+
     if (g_failures == 0) {
         std::puts("timeutil_test passed");
         return 0;
