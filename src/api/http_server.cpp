@@ -61,6 +61,27 @@ json j_opt(const std::optional<double>& v) { return v ? json(*v) : json(nullptr)
 json j_opt(const std::optional<int>& v) { return v ? json(*v) : json(nullptr); }
 
 // ---- serialization ---------------------------------------------------------
+json cal_json(const sqm::Calibration& c) {
+    return json{{"light_cal_offset", c.light_cal_offset},
+                {"dark_cal_period_s", c.dark_cal_period_s},
+                {"temp_light_c", c.temp_light_c},
+                {"sensor_offset", c.sensor_offset},
+                {"temp_dark_c", c.temp_dark_c},
+                {"raw", c.raw}};
+}
+json calstatus_json(const sqm::CalStatus& s) {
+    return json{{"mode", std::string(1, s.mode)}, {"armed", s.armed},
+                {"locked", s.locked}, {"raw", s.raw}};
+}
+json configlog_json(const db::ConfigLogRow& r) {
+    return json{{"id", r.id}, {"ts_utc", r.ts_utc}, {"event_type", r.event_type},
+                {"light_cal_offset", j_opt(r.light_cal_offset)},
+                {"dark_cal_period_s", j_opt(r.dark_cal_period_s)},
+                {"temp_light_c", j_opt(r.temp_light_c)}, {"sensor_offset", j_opt(r.sensor_offset)},
+                {"temp_dark_c", j_opt(r.temp_dark_c)}, {"interval_s", j_opt(r.interval_s)},
+                {"threshold", j_opt(r.threshold)}, {"raw", r.raw},
+                {"changed_by", r.changed_by}, {"note", r.note}};
+}
 json to_json(const db::SensorRow& s) {
     return json{{"id", s.id},
                 {"name", s.name},
@@ -374,6 +395,22 @@ bool require_auth(const httplib::Request& req, httplib::Response& res, const std
     }
     send_err(res, 401, "unauthorized");
     return false;
+}
+
+// Best-effort identity of the caller, for audit fields (changed_by).
+std::string auth_user(const httplib::Request& req, const std::string& token,
+                      const db::DbConfig& dbc) {
+    const std::string h = req.get_header_value("Authorization");
+    if (!token.empty() && (h == token || h == "Bearer " + token)) return "api-token";
+    const std::string sess = session_token(req);
+    if (!sess.empty()) {
+        try {
+            db::Database db(dbc);
+            if (const auto si = db.validate_session(sess)) return si->username;
+        } catch (const std::exception&) {
+        }
+    }
+    return "";
 }
 
 }  // namespace
@@ -808,6 +845,111 @@ void HttpServer::start() {
     srv.Post(R"(/api/v1/sensors/([^/]+)/disable)",
              [set_status](const httplib::Request& req, httplib::Response& res) {
                  set_status(req, res, "inactive");
+             });
+
+    // ---- calibration ----
+    // Live calibration read (cx). Read-only on the device.
+    srv.Get(R"(/api/v1/sensors/([^/]+)/calibration)",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                try {
+                    db::Database db(dbc);
+                    const auto s = db.find_sensor(req.matches[1]);
+                    if (!s) { send_err(res, 404, "no such sensor"); return; }
+                    auto dev = sqm::open_device(s->transport, s->address, 5000);
+                    send(res, 200, cal_json(dev->calibration()));
+                } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+            });
+    // Calibration/config history from config_log.
+    srv.Get(R"(/api/v1/sensors/([^/]+)/calibration/history)",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                try {
+                    db::Database db(dbc);
+                    const int limit =
+                        req.has_param("limit") ? std::atoi(req.get_param_value("limit").c_str()) : 50;
+                    json arr = json::array();
+                    for (const auto& r : db.config_log(req.matches[1], limit))
+                        arr.push_back(configlog_json(r));
+                    send(res, 200, arr);
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
+    // Read cx and store a snapshot to config_log (audit).
+    srv.Post(R"(/api/v1/sensors/([^/]+)/calibration/record)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 try {
+                     db::Database db(dbc);
+                     const auto s = db.find_sensor(req.matches[1]);
+                     if (!s) { send_err(res, 404, "no such sensor"); return; }
+                     auto dev = sqm::open_device(s->transport, s->address, 5000);
+                     const sqm::Calibration c = dev->calibration();
+                     db.insert_calibration(s->id, c, "", "calibration", auth_user(req, token, dbc),
+                                           "recorded snapshot");
+                     send(res, 200, cal_json(c));
+                 } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+             });
+    // Arm a calibration mode {mode: "light"|"dark"}. The physical unlock switch
+    // then triggers the actual measurement.
+    srv.Post(R"(/api/v1/sensors/([^/]+)/calibration/arm)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 json body;
+                 try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+                 const std::string mode = body.value("mode", "");
+                 if (mode != "light" && mode != "dark") {
+                     send_err(res, 400, "mode must be 'light' or 'dark'");
+                     return;
+                 }
+                 try {
+                     db::Database db(dbc);
+                     const auto s = db.find_sensor(req.matches[1]);
+                     if (!s) { send_err(res, 404, "no such sensor"); return; }
+                     auto dev = sqm::open_device(s->transport, s->address, 5000);
+                     const sqm::CalStatus st =
+                         (mode == "light") ? dev->arm_light_calibration() : dev->arm_dark_calibration();
+                     db.insert_event("sqm", "info", "calibration_arm", mode, s->id);
+                     send(res, 200, calstatus_json(st));
+                 } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+             });
+    // Disarm all calibration modes; reports the lock-switch status.
+    srv.Post(R"(/api/v1/sensors/([^/]+)/calibration/disarm)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 try {
+                     db::Database db(dbc);
+                     const auto s = db.find_sensor(req.matches[1]);
+                     if (!s) { send_err(res, 404, "no such sensor"); return; }
+                     auto dev = sqm::open_device(s->transport, s->address, 5000);
+                     send(res, 200, calstatus_json(dev->disarm_calibration()));
+                 } catch (const std::exception& e) { send_err(res, 502, e.what()); }
+             });
+    // Manually write calibration values {light_offset?, light_temp?, dark_period?,
+    // dark_temp?}, then re-read cx and record the change. This modifies the unit.
+    srv.Post(R"(/api/v1/sensors/([^/]+)/calibration/set)",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 json body;
+                 try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
+                 try {
+                     db::Database db(dbc);
+                     const auto s = db.find_sensor(req.matches[1]);
+                     if (!s) { send_err(res, 404, "no such sensor"); return; }
+                     auto dev = sqm::open_device(s->transport, s->address, 5000);
+                     std::string note = "manual set:";
+                     const auto apply = [&](const char* key, auto setter) {
+                         if (body.contains(key) && body[key].is_number()) {
+                             (dev.get()->*setter)(body[key].get<double>());
+                             note += std::string(" ") + key;
+                         }
+                     };
+                     apply("light_offset", &sqm::SqmDevice::set_light_offset);
+                     apply("light_temp", &sqm::SqmDevice::set_light_temp);
+                     apply("dark_period", &sqm::SqmDevice::set_dark_period);
+                     apply("dark_temp", &sqm::SqmDevice::set_dark_temp);
+                     if (note == "manual set:") { send_err(res, 400, "no calibration fields to set"); return; }
+                     const sqm::Calibration c = dev->calibration();  // updated state
+                     db.insert_calibration(s->id, c, "", "config_change", auth_user(req, token, dbc), note);
+                     send(res, 200, cal_json(c));
+                 } catch (const std::exception& e) { send_err(res, 502, e.what()); }
              });
     srv.Post("/api/v1/weather-stations", [dbc, token](const httplib::Request& req, httplib::Response& res) {
         if (!require_auth(req, res, token, dbc, true)) return;

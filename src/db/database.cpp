@@ -347,17 +347,62 @@ std::vector<ReadingRow> Database::readings_between(const std::string& sensor_id,
 }
 
 void Database::insert_calibration(const std::string& sensor_id, const sqm::Calibration& c,
-                                  const std::string& ts_utc) {
+                                  const std::string& ts_utc, const std::string& event_type,
+                                  const std::string& changed_by, const std::string& note) {
+    const std::string type = (event_type == "config_change") ? "config_change" : "calibration";
     std::ostringstream q;
     q << "INSERT INTO config_log "
          "(sensor_id, ts_utc, event_type, light_cal_offset, dark_cal_period_s, "
-         "temp_light_c, sensor_offset, temp_dark_c, raw) VALUES ('"
+         "temp_light_c, sensor_offset, temp_dark_c, raw, changed_by, note) VALUES ('"
       << esc(sensor_id) << "', "
       << (ts_utc.empty() ? std::string("UTC_TIMESTAMP()") : ("'" + esc(ts_utc) + "'"))
-      << ", 'calibration', " << c.light_cal_offset << ", " << c.dark_cal_period_s << ", "
+      << ", '" << type << "', " << c.light_cal_offset << ", " << c.dark_cal_period_s << ", "
       << c.temp_light_c << ", " << c.sensor_offset << ", " << c.temp_dark_c << ", '"
-      << esc(c.raw) << "')";
+      << esc(c.raw) << "', "
+      << (changed_by.empty() ? std::string("NULL") : ("'" + esc(changed_by) + "'")) << ", "
+      << (note.empty() ? std::string("NULL") : ("'" + esc(note) + "'")) << ")";
     exec(q.str());
+}
+
+std::vector<ConfigLogRow> Database::config_log(const std::string& sensor_id, int limit) {
+    if (limit < 1) limit = 1;
+    std::ostringstream q;
+    q << "SELECT id, ts_utc, event_type, light_cal_offset, dark_cal_period_s, temp_light_c, "
+         "sensor_offset, temp_dark_c, interval_s, threshold, raw, changed_by, note "
+         "FROM config_log WHERE sensor_id='"
+      << esc(sensor_id) << "' ORDER BY id DESC LIMIT " << limit;
+    exec(q.str());
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr) {
+        throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    }
+    const auto od = [](const char* v) {
+        return v ? std::optional<double>(std::atof(v)) : std::nullopt;
+    };
+    const auto oi = [](const char* v) {
+        return v ? std::optional<int>(std::atoi(v)) : std::nullopt;
+    };
+    std::vector<ConfigLogRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) {
+        ConfigLogRow r;
+        r.id = row[0] ? std::atoll(row[0]) : 0;
+        r.ts_utc = row[1] ? row[1] : "";
+        r.event_type = row[2] ? row[2] : "";
+        r.light_cal_offset = od(row[3]);
+        r.dark_cal_period_s = od(row[4]);
+        r.temp_light_c = od(row[5]);
+        r.sensor_offset = od(row[6]);
+        r.temp_dark_c = od(row[7]);
+        r.interval_s = oi(row[8]);
+        r.threshold = od(row[9]);
+        r.raw = row[10] ? row[10] : "";
+        r.changed_by = row[11] ? row[11] : "";
+        r.note = row[12] ? row[12] : "";
+        out.push_back(std::move(r));
+    }
+    mysql_free_result(res);
+    return out;
 }
 
 namespace {

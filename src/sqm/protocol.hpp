@@ -44,16 +44,40 @@ struct UnitInfo {
     std::string raw;
 };
 
+// Parsed arm/disarm calibration response, e.g. "zAaL" (light armed, locked),
+// "zBaL" (dark armed), "zxdL" (all disarmed). The physical unlock switch, not
+// software, triggers the actual measurement once a mode is armed.
+struct CalStatus {
+    char mode = 'x';     // 'A' = light, 'B' = dark, 'x' = all modes
+    bool armed = false;  // true if 'a' (armed), false if 'd' (disarmed)
+    bool locked = true;  // true if 'L' (unlock switch Locked), false if 'U' (Unlocked)
+    std::string raw;
+};
+
+// Parsed echo of a manual calibration-set command, e.g. "z,5,00000017.60m":
+// the device reports the value it actually wrote to EEPROM (which for temps may
+// differ slightly from the requested value due to raw resolution).
+struct CalSetEcho {
+    char which = 0;      // '5' offset, '6' light temp, '7' dark period, '8' dark temp
+    double value = 0.0;  // stored value with the trailing unit character stripped
+    std::string raw;
+};
+
 // Command tokens sent to the device.
 inline constexpr const char* kCmdReading = "rx";
 inline constexpr const char* kCmdUnaveraged = "ux";
 inline constexpr const char* kCmdCalibration = "cx";
 inline constexpr const char* kCmdUnitInfo = "ix";
+inline constexpr const char* kCmdArmLight = "zcalAx";  // arm light calibration
+inline constexpr const char* kCmdArmDark = "zcalBx";   // arm dark calibration
+inline constexpr const char* kCmdDisarm = "zcalDx";    // disarm; reports lock status
 
 // Parsers. Each throws std::runtime_error if the line is not the expected type
 // or a field cannot be parsed.
 Reading parse_reading(const std::string& line);
 Calibration parse_calibration(const std::string& line);
 UnitInfo parse_unit_info(const std::string& line);
+CalStatus parse_cal_status(const std::string& line);
+CalSetEcho parse_cal_set_echo(const std::string& line);
 
 }  // namespace nightwatcher::sqm

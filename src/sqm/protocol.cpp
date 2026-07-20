@@ -108,4 +108,33 @@ UnitInfo parse_unit_info(const std::string& line_in) {
     return u;
 }
 
+CalStatus parse_cal_status(const std::string& line_in) {
+    const std::string line = trim(line_in);
+    // e.g. "zAaL": z, mode(A/B/x), state(a/d), lock(L/U).
+    if (line.size() < 4 || line[0] != 'z') {
+        throw std::runtime_error("not a calibration-status response: '" + line + "'");
+    }
+    CalStatus s;
+    s.mode = line[1];
+    s.armed = (line[2] == 'a');
+    s.locked = (line[3] != 'U');  // 'L' = locked, 'U' = unlocked
+    s.raw = line;
+    return s;
+}
+
+CalSetEcho parse_cal_set_echo(const std::string& line_in) {
+    const std::string line = trim(line_in);
+    // e.g. "z,5,00000017.60m": z, which(5-8), value with trailing unit letter.
+    const auto f = split(line, ',');
+    if (f.size() < 3 || trim(f[0]) != "z") {
+        throw std::runtime_error("not a calibration-set response: '" + line + "'");
+    }
+    CalSetEcho e;
+    const std::string which = trim(f[1]);
+    e.which = which.empty() ? '\0' : which[0];
+    e.value = to_double(f[2]);
+    e.raw = line;
+    return e;
+}
+
 }  // namespace nightwatcher::sqm

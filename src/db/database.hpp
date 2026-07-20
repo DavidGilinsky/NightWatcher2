@@ -200,6 +200,23 @@ struct EventRow {
     std::string detail;
 };
 
+// One config_log row (calibration snapshot or config change).
+struct ConfigLogRow {
+    long long id = 0;
+    std::string ts_utc;
+    std::string event_type;  // "calibration" | "config_change"
+    std::optional<double> light_cal_offset;
+    std::optional<double> dark_cal_period_s;
+    std::optional<double> temp_light_c;
+    std::optional<double> sensor_offset;
+    std::optional<double> temp_dark_c;
+    std::optional<int> interval_s;
+    std::optional<double> threshold;
+    std::string raw;
+    std::string changed_by;
+    std::string note;
+};
+
 // A web-UI / API user.
 struct UserRow {
     long long id = 0;
@@ -341,9 +358,16 @@ public:
     std::vector<ReadingRow> readings_between(const std::string& sensor_id, const std::string& from,
                                              const std::string& to, int limit = 5000);
 
-    // Record a calibration snapshot in config_log.
+    // Record a calibration snapshot (or a manual change) in config_log.
+    // event_type is "calibration" (a read snapshot) or "config_change" (a manual
+    // set); changed_by/note capture who/why for the audit trail.
     void insert_calibration(const std::string& sensor_id, const sqm::Calibration& c,
-                            const std::string& ts_utc = "");
+                            const std::string& ts_utc = "",
+                            const std::string& event_type = "calibration",
+                            const std::string& changed_by = "", const std::string& note = "");
+
+    // Calibration/config history for a sensor, most-recent first.
+    std::vector<ConfigLogRow> config_log(const std::string& sensor_id, int limit = 50);
 
 private:
     struct Impl;

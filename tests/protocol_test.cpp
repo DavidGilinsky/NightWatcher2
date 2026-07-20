@@ -100,6 +100,33 @@ int main() {
         CHECK(threw);
     }
 
+    // Calibration arm/disarm status parsing (zAaL / zBaU / zxdL).
+    {
+        const CalStatus a = parse_cal_status("zAaL");
+        CHECK(a.mode == 'A'); CHECK(a.armed); CHECK(a.locked);
+        const CalStatus b = parse_cal_status("zBaU");
+        CHECK(b.mode == 'B'); CHECK(b.armed); CHECK(!b.locked);
+        const CalStatus d = parse_cal_status("zxdL");
+        CHECK(d.mode == 'x'); CHECK(!d.armed); CHECK(d.locked);
+    }
+
+    // Manual-set echo parsing (value with a trailing unit character).
+    {
+        const CalSetEcho e5 = parse_cal_set_echo("z,5,00000017.60m");
+        CHECK(e5.which == '5'); CHECK(close_to(e5.value, 17.60));
+        const CalSetEcho e7 = parse_cal_set_echo("z,7,00000300.00s");
+        CHECK(e7.which == '7'); CHECK(close_to(e7.value, 300.0));
+        const CalSetEcho e6 = parse_cal_set_echo("z,6,019.0C");
+        CHECK(e6.which == '6'); CHECK(close_to(e6.value, 19.0));
+    }
+
+    // Malformed calibration status must throw.
+    {
+        bool threw = false;
+        try { parse_cal_status("nope"); } catch (const std::exception&) { threw = true; }
+        CHECK(threw);
+    }
+
     if (g_failures == 0) {
         std::puts("protocol_test passed");
         return 0;

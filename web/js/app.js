@@ -260,6 +260,106 @@ async function setSensorEnabled(s, enable) {
   } catch (e) { alert(e.message); }
 }
 
+// Calibration panel: read cx + lock status, view/record history, and (admin)
+// arm/disarm or manually write calibration values.
+async function sensorCalibration(s) {
+  const p = id => `/sensors/${encodeURIComponent(s.id)}/calibration${id}`;
+  const body = el('div');
+  body.append(el('div', { class: 'muted', style: 'margin-bottom:.5rem' }, `${s.transport} ${s.address}`));
+  const curBox = el('div', { class: 'checks' });
+  const status = el('div');
+  const histBox = el('div', { style: 'margin-top:.6rem' });
+  body.append(curBox);
+
+  const numField = (label, name) => {
+    const input = el('input', { name, type: 'number', step: 'any' });
+    return { input, label: el('label', {}, label, input) };
+  };
+  const inputs = {
+    light_offset: numField('Light offset (mag)', 'light_offset'),
+    light_temp: numField('Light temp (°C)', 'light_temp'),
+    dark_period: numField('Dark period (s)', 'dark_period'),
+    dark_temp: numField('Dark temp (°C)', 'dark_temp'),
+  };
+
+  async function loadCurrent() {
+    curBox.innerHTML = ''; curBox.append(msg('warn', 'Reading calibration from the device…'));
+    try {
+      const c = await api('GET', p(''));
+      curBox.innerHTML = '';
+      curBox.append(el('div', { class: 'check' },
+        el('b', {}, 'Current calibration'),
+        el('div', { class: 'muted', style: 'font-size:.85rem;margin-top:.15rem' },
+          `light offset ${fmtMag(c.light_cal_offset)} mag · dark period ${fmtNum(c.dark_cal_period_s)} s · ` +
+          `light temp ${fmtNum(c.temp_light_c)} °C · dark temp ${fmtNum(c.temp_dark_c)} °C · ` +
+          `sensor offset ${fmtMag(c.sensor_offset)} mag`)));
+      inputs.light_offset.input.value = c.light_cal_offset;
+      inputs.light_temp.input.value = c.temp_light_c;
+      inputs.dark_period.input.value = c.dark_cal_period_s;
+      inputs.dark_temp.input.value = c.temp_dark_c;
+    } catch (e) { curBox.innerHTML = ''; curBox.append(msg('err', e.message)); }
+  }
+
+  async function loadHistory() {
+    try {
+      const rows = await api('GET', p('/history?limit=25'));
+      histBox.innerHTML = '';
+      histBox.append(el('h3', { style: 'font-size:1rem;margin:.4rem 0' }, 'History'));
+      if (!rows.length) { histBox.append(el('div', { class: 'muted' }, 'No calibration history yet.')); return; }
+      histBox.append(el('div', { class: 'scroll' }, table([
+        { label: 'When (UTC)', render: r => r.ts_utc },
+        { label: 'Type', render: r => r.event_type },
+        { label: 'Offset', render: r => r.light_cal_offset == null ? '—' : fmtMag(r.light_cal_offset) },
+        { label: 'Period', render: r => r.dark_cal_period_s == null ? '—' : fmtNum(r.dark_cal_period_s) + 's' },
+        { label: 'By', render: r => r.changed_by || '—' },
+        { label: 'Note', render: r => r.note || '—' },
+      ], rows)));
+    } catch (e) { histBox.innerHTML = ''; histBox.append(msg('err', e.message)); }
+  }
+
+  body.append(status);
+
+  if (isAdmin()) {
+    const calAction = async (path, payload, describe) => {
+      status.innerHTML = '';
+      try {
+        const r = await api('POST', p(path), payload);
+        if (r && r.mode !== undefined) {
+          status.append(msg('ok', `${describe}: ${r.armed ? 'armed' : 'disarmed'}, unlock switch is ` +
+            `${r.locked ? 'LOCKED' : 'UNLOCKED'}.` + (r.armed ? ' Flip the unlock switch to calibrate.' : '')));
+        } else { status.append(msg('ok', `${describe} done.`)); }
+        loadHistory();
+      } catch (e) { status.append(msg('err', e.message)); }
+    };
+    body.append(el('div', { class: 'row', style: 'margin:.5rem 0' },
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: () => calAction('/record', undefined, 'Snapshot recorded').then(loadHistory) }, 'Record snapshot'),
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: () => calAction('/arm', { mode: 'light' }, 'Arm light') }, 'Arm light'),
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: () => calAction('/arm', { mode: 'dark' }, 'Arm dark') }, 'Arm dark'),
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: () => calAction('/disarm', {}, 'Disarm') }, 'Disarm')));
+
+    body.append(el('div', { class: 'card', style: 'margin-top:.5rem' },
+      el('b', {}, 'Manually set calibration'),
+      msg('warn', '⚠ Writes directly to the unit’s calibration EEPROM. Use only to restore or copy a known calibration.'),
+      el('div', { class: 'form-grid' }, inputs.light_offset.label, inputs.light_temp.label, inputs.dark_period.label, inputs.dark_temp.label),
+      el('button', {
+        class: 'btn', type: 'button', style: 'margin-top:.5rem', onclick: async () => {
+          status.innerHTML = '';
+          const payload = {};
+          for (const k of Object.keys(inputs)) { const v = inputs[k].input.value; if (v !== '') payload[k] = Number(v); }
+          if (!Object.keys(payload).length) { status.append(msg('err', 'No values to set.')); return; }
+          if (!confirm(`Write these calibration values to ${s.id}? This modifies the device.`)) return;
+          try { await api('POST', p('/set'), payload); status.append(msg('ok', 'Calibration written to the device.')); loadCurrent(); loadHistory(); }
+          catch (e) { status.append(msg('err', e.message)); }
+        }
+      }, 'Write to device')));
+  }
+
+  body.append(histBox);
+  modal('Calibration — ' + s.id, body);
+  loadCurrent();
+  loadHistory();
+}
+
 function sensorForm(s) {
   const editing = !!s;
   const f = el('form', { class: 'form card', style: 'margin-bottom:1rem' });
@@ -363,6 +463,7 @@ async function viewSensors() {
   if (isAdmin()) cols.push({
     label: '', render: s => el('div', { class: 'row' },
       el('button', { class: 'btn ghost sm', type: 'button', onclick: () => sensorTest(s) }, 'Test'),
+      el('button', { class: 'btn ghost sm', type: 'button', onclick: () => sensorCalibration(s) }, 'Calibrate'),
       s.status === 'active'
         ? el('button', { class: 'btn ghost sm', type: 'button', onclick: () => setSensorEnabled(s, false) }, 'Disable')
         : el('button', { class: 'btn sm', type: 'button', onclick: () => setSensorEnabled(s, true) }, 'Enable'),

@@ -28,10 +28,26 @@ public:
     Calibration calibration();  // cx
     UnitInfo info();            // ix
 
+    // Calibration control. Arming enables a mode; the operator then flips the
+    // physical unlock switch to trigger the measurement. Disarm reports the
+    // lock-switch status. These change device state, not the caller's.
+    CalStatus arm_light_calibration();   // zcalAx
+    CalStatus arm_dark_calibration();    // zcalBx
+    CalStatus disarm_calibration();      // zcalDx
+
+    // Manually write a calibration value to EEPROM (restore/copy calibration).
+    // Each returns the value the device reports storing. These modify the unit.
+    CalSetEcho set_light_offset(double mag_arcsec2);  // zcal5
+    CalSetEcho set_light_temp(double celsius);        // zcal6
+    CalSetEcho set_dark_period(double seconds);       // zcal7
+    CalSetEcho set_dark_temp(double celsius);         // zcal8
+
     // Send a raw command and return the raw response line (terminator stripped).
     std::string query_raw(const std::string& cmd);
 
 private:
+    CalSetEcho set_cal_value(char which, double value, int decimals);
+
     std::unique_ptr<ITransport> t_;
 };
 

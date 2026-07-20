@@ -135,6 +135,24 @@ int main() {
     CHECK((r = cli.Post("/api/v1/sensors/APITEST/enable", "", "application/json")) && r->status == 401);
     CHECK((r = cli.Post("/api/v1/sensors/APITEST/test", "", "application/json")) && r->status == 401);
 
+    // ---- calibration endpoints (routing/auth/validation; APITEST is unreachable) ----
+    // History is a DB read (empty array for a fresh sensor).
+    r = cli.Get("/api/v1/sensors/APITEST/calibration/history");
+    CHECK(r && r->status == 200);
+    if (r && r->status == 200) CHECK(json::parse(r->body).is_array());
+    // Arm validates the mode before touching the device.
+    CHECK((r = cli.Post("/api/v1/sensors/APITEST/calibration/arm", auth, R"({"mode":"nope"})",
+                        "application/json")) && r->status == 400);
+    // Reaching the (unreachable) device yields 502.
+    CHECK((r = cli.Get("/api/v1/sensors/APITEST/calibration")) && r->status == 502);
+    CHECK((r = cli.Post("/api/v1/sensors/APITEST/calibration/set", auth, R"({"light_offset":17.6})",
+                        "application/json")) && r->status == 502);
+    // Mutating calibration requires auth.
+    CHECK((r = cli.Post("/api/v1/sensors/APITEST/calibration/record", "", "application/json")) &&
+          r->status == 401);
+    CHECK((r = cli.Post("/api/v1/sensors/APITEST/calibration/set", "", "application/json")) &&
+          r->status == 401);
+
     // DSN download: a community-format .dat with an attachment header.
     r = cli.Get("/api/v1/sensors/APITEST/dsn");
     CHECK(r && r->status == 200);
