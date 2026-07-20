@@ -111,6 +111,14 @@ public:
         httplib::Headers headers;
         if (!token.empty()) headers.emplace("Authorization", "Bearer " + token);
 
+        // Co-located ambient temperature for the whole window; the receiver
+        // interpolates it onto the reading timestamps. Sent with each batch so
+        // every POST is self-contained (the receiver de-dupes).
+        json warr = json::array();
+        for (const auto& w : ctx.weather)
+            if (w.temp_c.has_value())
+                warr.push_back({{"ts_utc", w.ts_utc}, {"temp_c", *w.temp_c}});
+
         const auto& rs = ctx.readings;
         for (size_t i = 0; i < rs.size(); i += static_cast<size_t>(batch)) {
             const size_t end = std::min(rs.size(), i + static_cast<size_t>(batch));
@@ -121,7 +129,9 @@ public:
                                {"temp_c", rs[k].temp_c},
                                {"quality", rs[k].quality}});
             }
-            const std::string body = json{{"site_id", site_id}, {"sensor", sensor}, {"readings", arr}}.dump();
+            json obj = {{"site_id", site_id}, {"sensor", sensor}, {"readings", arr}};
+            if (!warr.empty()) obj["weather"] = warr;
+            const std::string body = obj.dump();
             auto res = cli.Post(path.c_str(), headers, body, "application/json");
             if (!res)
                 throw std::runtime_error("webhook POST to " + url + " failed: " +

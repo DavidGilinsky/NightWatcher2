@@ -29,7 +29,7 @@ uploading to the DSN shared storage, and/or pushing to a companion WordPress sit
 | `nwdb` | CLI to register sensors, poll an SQM into the DB, and query readings | Done |
 | `nightwatcherd` | Daemon: polls active sensors + weather stations on their intervals, records readings, runs scheduled exports, serves the API/UI | Done |
 | REST API | Embedded HTTP/JSON: auth, sensor/weather CRUD, readings/query, live poll/test/discover, calibration, exports, server settings; optional HTTPS | Done |
-| Web UI | Login, dashboard, sensor/weather management, query + time-series graph, sensor test + calibration, DSN export, users, DB + server settings | Done |
+| Web UI | Login, dashboard, sensor/weather management, query + time-series graph (Sun/Moon/phase + ambient overlays), sensor test + calibration, DSN export, users, DB + server settings | Done |
 | Weather | Modular pull providers (Ambient Weather, Weather Underground) normalized to SI | Done |
 | Data export | Modular scheduled exporters — DSN community `.dat` → Google Drive, or **webhook push** to an HTTP endpoint | Done |
 | WordPress connector | Companion plugin (`nightwatcher-wp`) receives the webhook push; serves a read-only, public date-range graph | Done |
@@ -252,6 +252,11 @@ download), **DSN export** configuration, an **events** log, **user** management,
 maintenance (schema status/init, pruning), and a **server** tab (listen address, port, HTTPS).
 Admin-only controls are hidden for `viewer` accounts.
 
+The readings graph can overlay **Sun/Moon altitude**, a **moon-phase glyph**, and **ambient
+temperature** (from a co-located weather station, matched by shared `site`) — each toggleable —
+computed in-browser via a vendored SunCalc (BSD-2-Clause; no CDN). The SQM's own internal
+temperature is labelled **sensor °C** to distinguish it from ambient.
+
 ## Running the daemon
 
 `nightwatcherd` polls every `status = 'active'` sensor from the database on its interval,
@@ -281,8 +286,9 @@ readings; every run is recorded in `export_log`. Two target types ship today:
   to **Google Drive** (OAuth; authorize once with `nwexport-auth`). Configured from the web UI's
   export tab or the API.
 - **`webhook`** — **pushes** readings (incrementally, since the watermark) to an HTTP endpoint as
-  JSON with a bearer token, chunked for large backfills. This feeds the WordPress connector below,
-  and is configured via the export-targets API:
+  JSON with a bearer token, chunked for large backfills; each push also carries the **co-located
+  weather station's readings** (matched by shared `site`) so the receiver can overlay ambient
+  temperature. This feeds the WordPress connector below, and is configured via the export-targets API:
 
   ```sh
   curl -s -b jar -X POST localhost:8080/api/v1/export-targets \

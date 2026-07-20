@@ -86,7 +86,7 @@ function drawGraph(container, readings, sensor, opts) {
   const series = [
     {},
     { label: 'mag/arcsec²', stroke: '#4ea1ff', width: 2, scale: 'mag' },
-    { label: 'temp °C', stroke: '#ff8c42', width: 1, scale: 'temp' },
+    { label: 'sensor °C', stroke: '#ff8c42', width: 1, scale: 'temp' },
   ];
   const scales = { x: { time: true } };
   const axes = [
@@ -95,6 +95,35 @@ function drawGraph(container, readings, sensor, opts) {
     { scale: 'temp', side: 1, stroke: '#8fa0c0', grid: { show: false } },
   ];
   const hooks = {};
+
+  // Ambient (outdoor) temperature from a co-located weather station, interpolated
+  // onto the reading timestamps and drawn on the same °C axis as the sensor temp.
+  // opts.weather holds that station's readings ({ts_utc, temp_c}); opt-in via opts.ambient.
+  const wxRows = (opts && opts.weather) || [];
+  if (wxRows.length && (!opts || opts.ambient !== false)) {
+    const wx = [];
+    for (const w of wxRows) {
+      const wt = Date.parse(String(w.ts_utc).replace(' ', 'T') + 'Z') / 1000;
+      if (!Number.isNaN(wt) && w.temp_c != null) wx.push([wt, Number(w.temp_c)]);
+    }
+    wx.sort((a, b) => a[0] - b[0]);
+    if (wx.length) {
+      const MAXGAP = 3600;  // don't interpolate ambient across gaps > 1h
+      const amb = new Array(xs.length);
+      let p = 0;
+      for (let i = 0; i < xs.length; i++) {
+        const x = xs[i];
+        while (p < wx.length - 1 && wx[p + 1][0] <= x) p++;
+        const a = wx[p], b = wx[p + 1];
+        if (x < wx[0][0]) amb[i] = null;
+        else if (!b) amb[i] = (x - a[0] <= MAXGAP) ? a[1] : null;
+        else if (b[0] - a[0] > MAXGAP) amb[i] = null;
+        else amb[i] = a[1] + (x - a[0]) / (b[0] - a[0]) * (b[1] - a[1]);
+      }
+      data.push(amb);
+      series.push({ label: 'ambient °C', stroke: '#39c0b0', width: 1, scale: 'temp', points: { show: false } });
+    }
+  }
 
   // Sun/Moon altitude are a pure function of time + observer location, so the
   // overlay just needs the sensor's coordinates and SunCalc. Each line is opt-in
@@ -685,16 +714,28 @@ async function viewQuery() {
   const caption = el('div', { class: 'muted', style: 'margin:.4rem 0' });
   const tblWrap = el('div', { class: 'tablebox', style: 'margin-top:1rem' });
 
-  // Sun/Moon overlay toggles — persisted, and applied to sensor graphs only.
+  // Overlay toggles — persisted, applied to sensor graphs only. Ambient temperature
+  // comes from a co-located weather station (matched by site, else the sole station);
+  // its checkbox appears only when such a station exists for the selected sensor.
   const overlayPref = {
     sun: localStorage.getItem('nw_overlay_sun') !== '0',
     moon: localStorage.getItem('nw_overlay_moon') !== '0',
+    ambient: localStorage.getItem('nw_overlay_ambient') !== '0',
   };
-  let lastSensorGraph = null;  // { readings, sensor } backing the current sensor graph
+  const coLocatedStation = (sensor) => {
+    if (!sensor) return null;
+    const bySite = sensor.site ? stations.filter(w => w.site && w.site === sensor.site) : [];
+    if (bySite.length) return bySite[0];
+    const active = stations.filter(w => w.status !== 'retired');
+    return active.length === 1 ? active[0] : null;  // sole-station fallback
+  };
+  let lastSensorGraph = null;  // { readings, sensor, weather } backing the current sensor graph
   const redrawOverlay = () => {
     if (lastSensorGraph) {
-      drawGraph(chart, lastSensorGraph.readings, lastSensorGraph.sensor,
-        { sun: overlayPref.sun, moon: overlayPref.moon });
+      drawGraph(chart, lastSensorGraph.readings, lastSensorGraph.sensor, {
+        sun: overlayPref.sun, moon: overlayPref.moon,
+        ambient: overlayPref.ambient, weather: lastSensorGraph.weather,
+      });
     }
   };
   const overlayChk = (key, label) => el('label', { style: 'display:inline-flex;align-items:center;gap:.3rem' },
@@ -706,8 +747,10 @@ async function viewQuery() {
         redrawOverlay();
       },
     }), label);
+  const ambientChkLabel = overlayChk('ambient', 'Ambient');
+  ambientChkLabel.style.display = 'none';  // shown by load() when a co-located station exists
   const overlayWrap = el('span', { class: 'row', style: 'gap:.5rem' },
-    el('span', { class: 'muted' }, 'Overlay'), overlayChk('sun', 'Sun'), overlayChk('moon', 'Moon'));
+    el('span', { class: 'muted' }, 'Overlay'), overlayChk('sun', 'Sun'), overlayChk('moon', 'Moon'), ambientChkLabel);
 
   const toUtc = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   const rangeParams = () => {
@@ -750,12 +793,22 @@ async function viewQuery() {
         ];
       } else {
         const sensor = sensors.find(s => s.id === id);
-        lastSensorGraph = { readings: rs, sensor };
-        drawGraph(chart, rs, sensor, { sun: overlayPref.sun, moon: overlayPref.moon });
+        const station = coLocatedStation(sensor);
+        ambientChkLabel.style.display = station ? '' : 'none';
+        let weather = null;
+        if (station) {
+          try { weather = await api('GET', `/weather-stations/${encodeURIComponent(station.id)}/readings?${p}`); }
+          catch (_) { weather = null; }
+        }
+        lastSensorGraph = { readings: rs, sensor, weather };
+        drawGraph(chart, rs, sensor, {
+          sun: overlayPref.sun, moon: overlayPref.moon,
+          ambient: overlayPref.ambient, weather,
+        });
         cols = [
           { label: 'Time (UTC)', render: r => r.ts_utc },
           { label: 'mag/arcsec²', render: r => fmtMag(r.mag_arcsec2) },
-          { label: 'temp °C', render: r => fmtNum(r.temp_c) },
+          { label: 'sensor °C', render: r => fmtNum(r.temp_c) },
           { label: 'freq Hz', render: r => r.freq_hz },
           { label: 'quality', render: r => el('span', { class: 'pill ' + (r.quality || '') }, r.quality) },
           { label: 'source', render: r => r.source },

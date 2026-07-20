@@ -24,6 +24,7 @@ namespace nightwatcher::exporter {
 struct ExportContext {
     db::SensorRow sensor;
     std::vector<db::ReadingRow> readings;
+    std::vector<db::WeatherReadingRow> weather;  // co-located station readings, for ambient overlay
     std::string from_ts;  // UTC window bounds, for file naming / logging
     std::string to_ts;
 };

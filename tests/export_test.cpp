@@ -214,10 +214,18 @@ int main() {
             std::thread th([&] { srv.listen_after_bind(); });
             const std::string base = "http://127.0.0.1:" + std::to_string(port);
 
+            // Co-located weather rides along in each batch's payload (ambient overlay).
+            ex::ExportContext wctx = ctx;
+            db::WeatherReadingRow w1;
+            w1.station_id = "WX1"; w1.ts_utc = "2026-07-19 04:00:00"; w1.temp_c = 18.5;
+            db::WeatherReadingRow w2 = w1;
+            w2.ts_utc = "2026-07-19 04:05:00"; w2.temp_c = 19.0;
+            wctx.weather = {w1, w2};
+
             // batch=1 with 2 readings -> two POSTs, each bearer-authed.
             const std::string cfg = R"({"url":")" + base +
                 R"(/ingest","token":"s3cret","site_id":"DSN036-S","batch":1})";
-            const ex::ExportResult wres = ex::make_exporter("webhook", cfg)->run(ctx);
+            const ex::ExportResult wres = ex::make_exporter("webhook", cfg)->run(wctx);
             CHECK(wres.row_count == 2);
             CHECK(wres.remote_id == base + "/ingest");
             CHECK(posts == 2);                                   // chunked into 2
@@ -226,6 +234,8 @@ int main() {
             CHECK(contains(all_bodies, "2026-07-19 04:00:00"));  // reading 1
             CHECK(contains(all_bodies, "2026-07-19 04:05:00"));  // reading 2
             CHECK(contains(all_bodies, "\"latitude\":31.95"));   // sensor metadata
+            CHECK(contains(all_bodies, "\"weather\""));          // co-located weather present
+            CHECK(contains(all_bodies, "18.5"));                 // ambient temperature value
 
             // A non-2xx response must throw.
             threw = false;
