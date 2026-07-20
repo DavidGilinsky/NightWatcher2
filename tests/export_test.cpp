@@ -18,9 +18,11 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "exporter.hpp"
+#include "httplib.h"
 
 namespace ex = nightwatcher::exporter;
 namespace db = nightwatcher::db;
@@ -178,6 +180,65 @@ int main() {
         rmdir(dir);
     } else {
         std::puts("export_test: skipped outbox round-trip (mkdtemp failed)");
+    }
+
+    // --- Webhook exporter: POST readings to a local receiver ---
+    {
+        // Missing url -> run() throws.
+        auto bad = ex::make_exporter("webhook", "{}");
+        threw = false;
+        try { bad->run(ctx); } catch (const std::exception&) { threw = true; }
+        CHECK(threw);
+
+        // The webhook exporter is incremental, not month-rebuild.
+        CHECK(ex::make_exporter("webhook", R"({"url":"http://x/y"})")->windowing() ==
+              ex::Windowing::Incremental);
+
+        httplib::Server srv;
+        int posts = 0;
+        std::string all_bodies, last_auth;
+        srv.Post("/ingest", [&](const httplib::Request& req, httplib::Response& res) {
+            ++posts;
+            last_auth = req.get_header_value("Authorization");
+            all_bodies += req.body;
+            res.set_content(R"({"ok":true,"stored":1})", "application/json");
+        });
+        // A 401 endpoint to prove non-2xx surfaces as an error.
+        srv.Post("/deny", [](const httplib::Request&, httplib::Response& res) {
+            res.status = 401;
+            res.set_content("nope", "text/plain");
+        });
+
+        const int port = 18110;
+        if (srv.bind_to_port("127.0.0.1", port)) {
+            std::thread th([&] { srv.listen_after_bind(); });
+            const std::string base = "http://127.0.0.1:" + std::to_string(port);
+
+            // batch=1 with 2 readings -> two POSTs, each bearer-authed.
+            const std::string cfg = R"({"url":")" + base +
+                R"(/ingest","token":"s3cret","site_id":"DSN036-S","batch":1})";
+            const ex::ExportResult wres = ex::make_exporter("webhook", cfg)->run(ctx);
+            CHECK(wres.row_count == 2);
+            CHECK(wres.remote_id == base + "/ingest");
+            CHECK(posts == 2);                                   // chunked into 2
+            CHECK(last_auth == "Bearer s3cret");
+            CHECK(contains(all_bodies, "\"site_id\":\"DSN036-S\""));
+            CHECK(contains(all_bodies, "2026-07-19 04:00:00"));  // reading 1
+            CHECK(contains(all_bodies, "2026-07-19 04:05:00"));  // reading 2
+            CHECK(contains(all_bodies, "\"latitude\":31.95"));   // sensor metadata
+
+            // A non-2xx response must throw.
+            threw = false;
+            try {
+                ex::make_exporter("webhook", R"({"url":")" + base + R"(/deny"})")->run(ctx);
+            } catch (const std::exception&) { threw = true; }
+            CHECK(threw);
+
+            srv.stop();
+            th.join();
+        } else {
+            std::puts("export_test: skipped webhook test (bind failed)");
+        }
     }
 
     if (g_failures == 0) {

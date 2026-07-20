@@ -22,7 +22,7 @@ data from sensors across Southern Arizona.
 - Two sensor families: **SQM** units (manual data download every few months) and **TESS**
   sensors (transmit over WiFi). NightWatcher2 targets the SQM family and removes the
   manual-download step by logging continuously to a database.
-- Stations carry an id such as `DSN003` with a site label, e.g. `DSN003-S_Sugarloaf`.
+- Stations carry an id such as `DSN003` with a site label, e.g. `DSN003-S_CrestaLoma`.
 
 ## Open item
 

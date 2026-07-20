@@ -57,14 +57,53 @@ ExportRunResult run_export(db::Database& db, const db::ExportTargetRow& t) {
     }
     if (fresh.empty()) return summary;  // nothing new
 
-    std::set<std::string> months;  // distinct local YYYY-MM
     std::string newest;
-    for (const auto& r : fresh) {
-        months.insert(tu::local_ym(r.ts_utc, tz));
+    for (const auto& r : fresh)
         if (r.ts_utc > newest) newest = r.ts_utc;
-    }
 
     auto exporter = make_exporter(t.target, t.config);
+
+    // Incremental exporters (webhooks): push exactly the fresh readings, once;
+    // the receiver de-dupes, so there is no whole-period rebuild.
+    if (exporter->windowing() == Windowing::Incremental) {
+        std::reverse(fresh.begin(), fresh.end());  // readings_between is DESC; send ascending
+
+        ExportContext ctx;
+        ctx.sensor = *sensor;
+        ctx.readings = std::move(fresh);
+        ctx.from_ts = t.last_export_ts;  // may be empty on the first run
+        ctx.to_ts = now;
+
+        db::ExportLogRow log;
+        log.target_id = t.id;
+        log.from_ts = ctx.from_ts;
+        log.to_ts = now;
+        try {
+            const ExportResult res = exporter->run(ctx);
+            log.row_count = res.row_count;
+            log.file_name = res.file_name;
+            log.remote_id = res.remote_id;
+            log.status = res.row_count > 0 ? "ok" : "empty";
+            db.insert_export_log(log);
+            summary.files += 1;
+            summary.rows += res.row_count;
+            summary.file_names.push_back(res.file_name);
+        } catch (const std::exception& e) {
+            log.status = "error";
+            log.detail = e.what();
+            try { db.insert_export_log(log); } catch (const std::exception&) { /* best effort */ }
+            throw;
+        }
+
+        db.set_export_watermark(t.id, newest);
+        summary.last_ts = newest;
+        return summary;
+    }
+
+    // Monthly exporters (DSN): rebuild each affected local-month in full.
+    std::set<std::string> months;  // distinct local YYYY-MM
+    for (const auto& r : fresh)
+        months.insert(tu::local_ym(r.ts_utc, tz));
 
     for (const auto& ym : months) {
         std::string ref;
