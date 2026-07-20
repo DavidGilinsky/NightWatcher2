@@ -45,7 +45,7 @@ Run the skeleton daemon:
 
 ```sh
 ./build/nightwatcherd --version
-./build/nightwatcherd --config config/nightwatcher.conf.example
+./build/nightwatcherd --config build/nightwatcher.conf.example
 ```
 
 ### Cross-compiling for ARM (e.g. Raspberry Pi 64-bit)
@@ -175,16 +175,36 @@ curl -s -X POST  localhost:8080/api/v1/db/init -H "$AUTH"     # create any missi
 Also: weather-station CRUD (`/api/v1/weather-stations`), `GET /db/status`, and
 `DELETE /sensors/{id}/readings?before=DATE` (pruning).
 
+## Installing
+
+NightWatcher installs as a **self-contained bundle** under a single prefix (default
+`/usr/local/nightwatcher`), which keeps the install tidy and trivial to remove:
+
+```sh
+cmake --build build --parallel
+sudo cmake --install build          # or: sudo make -C build install
+```
+
+This lays down `bin/`, `web/`, `sql/`, `share/`, and the systemd unit under the prefix, then
+(reaching outside it) symlinks the CLIs onto `PATH` (`/usr/local/bin/{sqmctl,nwdb,nwexport-auth}`),
+symlinks the unit into `/etc/systemd/system/`, and seeds `/etc/nightwatcher/nightwatcher.conf`
+(never overwriting an existing one). Change the prefix with `-DCMAKE_INSTALL_PREFIX=…`.
+
+To finish: `sudo systemctl daemon-reload && sudo systemctl enable --now nightwatcherd`.
+To remove everything: `sudo /usr/local/nightwatcher/uninstall.sh` (or `sudo make -C build uninstall`) —
+this leaves `/etc/nightwatcher` (your config + secrets) and the database in place.
+
 ## Configuration
 
-Copy [`config/nightwatcher.conf.example`](config/nightwatcher.conf.example) to
-`/etc/nightwatcher/nightwatcher.conf`. It configures only the daemon itself (database
-connection + API); **sensors are registered in the database** with `nwdb add-sensor` (or the
-API), and each sensor's cadence is its `poll_interval_s`.
+`make install` seeds `/etc/nightwatcher/nightwatcher.conf` from
+[`config/nightwatcher.conf.example.in`](config/nightwatcher.conf.example.in); edit it for your
+site. It configures only the daemon itself (database connection + API); **sensors are registered
+in the database** with `nwdb add-sensor` (or the API), and each sensor's cadence is its
+`poll_interval_s`.
 
 ## Web UI
 
-With `web_root` set (default `/usr/share/nightwatcher/web`), the daemon serves a browser UI at
+With `web_root` set (default `/usr/local/nightwatcher/web`), the daemon serves a browser UI at
 `http://<host>:<api-port>/` — static HTML/JS (dark theme, uPlot graph, no external CDNs) talking to
 the API. It provides a login page (default `admin`/`admin`, must-change on first login), a live
 status **dashboard**, **sensor** and **weather-station** management, a readings **query with a
@@ -199,13 +219,15 @@ stores readings (with the `quality` flag), and logs connect/disconnect/errors to
 
 ```sh
 export NW_DB_PASSWORD=nightwatcher
-./build/nightwatcherd --config config/nightwatcher.conf.example
+./build/nightwatcherd --config build/nightwatcher.conf.example
 ```
 
 Signals: `SIGTERM` / `SIGINT` shut down gracefully; `SIGHUP` reloads the sensor list (so a
-sensor added via `nwdb` is picked up without a restart). Under systemd, install
-[`config/systemd/nightwatcherd.service`](config/systemd/nightwatcherd.service) and put the
-database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASSWORD=...`.
+sensor added via `nwdb` is picked up without a restart). Under systemd (the unit is installed and
+enabled as above, from [`config/systemd/nightwatcherd.service.in`](config/systemd/nightwatcherd.service.in)),
+put the database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASSWORD=...` (mode
+`0600`). The unit runs as a `DynamicUser` in the `dialout` group so it can reach a USB SQM-LU on
+`/dev/ttyUSB*`.
 
 ## Repository layout
 

@@ -27,6 +27,14 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+# Install as a self-contained bundle: everything lives under one prefix so the
+# install is clean and trivial to remove. Default /usr/local/nightwatcher;
+# an explicit -DCMAKE_INSTALL_PREFIX still wins.
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "/usr/local/nightwatcher" CACHE PATH
+        "Install prefix (self-contained bundle)" FORCE)
+endif()
+
 option(NW_BUILD_TESTS "Build unit tests" ON)
 option(NW_WITH_DB "Build the MariaDB database layer (requires libmariadb-dev)" ON)
 
@@ -135,19 +143,41 @@ if(NW_WITH_DB)
     target_link_libraries(nightwatcherd PRIVATE nw_core nw_sqm nw_db nw_api nw_weather nw_export Threads::Threads)
 endif()
 
-# ---- Install rules ----
-include(GNUInstallDirs)
-install(TARGETS sqmctl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# ---- Install (self-contained bundle under CMAKE_INSTALL_PREFIX) ----
+# Layout, flattened directly under the prefix:
+#   <prefix>/bin  <prefix>/web  <prefix>/sql  <prefix>/share  <prefix>/lib/systemd/system
+# PATH and systemd discovery are handled with symlinks (see NW_INSTALL_SYSTEM_LINKS).
+set(NW_SYMLINK_BINDIR "/usr/local/bin" CACHE PATH
+    "Directory to symlink the CLIs into so they land on PATH")
+option(NW_INSTALL_SYSTEM_LINKS
+    "At install time, create the PATH/systemd symlinks and seed /etc/nightwatcher" ON)
+
+# Bake the real prefix into the config example and the systemd unit.
+configure_file(config/nightwatcher.conf.example.in
+               ${CMAKE_CURRENT_BINARY_DIR}/nightwatcher.conf.example @ONLY)
+configure_file(config/systemd/nightwatcherd.service.in
+               ${CMAKE_CURRENT_BINARY_DIR}/nightwatcherd.service @ONLY)
+
+install(TARGETS sqmctl RUNTIME DESTINATION bin)
 if(NW_WITH_DB)
-    install(TARGETS nightwatcherd nwdb nwexport-auth RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS nightwatcherd nwdb nwexport-auth RUNTIME DESTINATION bin)
 endif()
-install(FILES config/nightwatcher.conf.example
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
-install(FILES sql/schema.sql sql/setup.sql
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher)
-install(DIRECTORY web/ DESTINATION ${CMAKE_INSTALL_DATADIR}/nightwatcher/web)
-install(FILES config/systemd/nightwatcherd.service
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/systemd/system)
+install(DIRECTORY web/ DESTINATION web)
+install(FILES sql/schema.sql sql/setup.sql DESTINATION sql)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nightwatcher.conf.example DESTINATION share)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nightwatcherd.service DESTINATION lib/systemd/system)
+
+# Bundled uninstaller + a `make uninstall` convenience target.
+configure_file(cmake/uninstall.sh.in ${CMAKE_CURRENT_BINARY_DIR}/uninstall.sh @ONLY)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/uninstall.sh DESTINATION .)
+add_custom_target(uninstall COMMAND ${CMAKE_CURRENT_BINARY_DIR}/uninstall.sh)
+
+# Reach outside the prefix: CLI symlinks on PATH, systemd unit link, /etc config.
+if(NW_INSTALL_SYSTEM_LINKS)
+    configure_file(cmake/nw_install_links.cmake.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/nw_install_links.cmake @ONLY)
+    install(SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/nw_install_links.cmake)
+endif()
 
 # ---- Tests ----
 if(NW_BUILD_TESTS)

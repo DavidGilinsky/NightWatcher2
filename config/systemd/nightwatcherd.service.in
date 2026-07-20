@@ -1,9 +1,11 @@
 # ---------------------------------------------------------------------------
 # Author:        David Gilinsky
-# File:          config/systemd/nightwatcherd.service
-# Purpose:       systemd service unit for the nightwatcherd daemon.
+# File:          config/systemd/nightwatcherd.service.in
+# Purpose:       systemd service unit for nightwatcherd. `@CMAKE_INSTALL_PREFIX@`
+#                is substituted at build time; `make install` symlinks the
+#                generated unit into /etc/systemd/system.
 # Created:       2026-07-18
-# Last Modified: 2026-07-18
+# Last Modified: 2026-07-20
 # Version:       0.1.0
 # ---------------------------------------------------------------------------
 [Unit]
@@ -14,7 +16,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/nightwatcherd --config /etc/nightwatcher/nightwatcher.conf
+ExecStart=@CMAKE_INSTALL_PREFIX@/bin/nightwatcherd --config /etc/nightwatcher/nightwatcher.conf
 Restart=on-failure
 RestartSec=5
 
@@ -28,9 +30,9 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
-# SQM-LU (USB serial) access needs the device; grant when serial transport is used:
-# SupplementaryGroups=dialout
-# DeviceAllow=/dev/ttyUSB0 rw
+# SQM-LU (USB serial) access: the DynamicUser is put in the dialout group so it
+# can open /dev/ttyUSB* (root:dialout 0660). Comment out if you use TCP only.
+SupplementaryGroups=dialout
 
 [Install]
 WantedBy=multi-user.target

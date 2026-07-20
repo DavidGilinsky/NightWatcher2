@@ -1,9 +1,11 @@
 # ---------------------------------------------------------------------------
 # Author:        David Gilinsky
-# File:          config/nightwatcher.conf.example
-# Purpose:       Example daemon configuration; copy to /etc/nightwatcher/.
+# File:          config/nightwatcher.conf.example.in
+# Purpose:       Example daemon configuration. `@CMAKE_INSTALL_PREFIX@` is
+#                substituted at build time; `make install` seeds a copy at
+#                /etc/nightwatcher/nightwatcher.conf.
 # Created:       2026-07-18
-# Last Modified: 2026-07-18
+# Last Modified: 2026-07-20
 # Version:       0.1.0
 # License:       GPL-3.0-or-later
 # ---------------------------------------------------------------------------
@@ -40,9 +42,9 @@ tls = off
 # tls_cert = /etc/nightwatcher/tls/nightwatcher-cert.pem
 # tls_key  = /etc/nightwatcher/tls/nightwatcher-key.pem
 # Path to schema.sql, used by POST /api/v1/db/init to create any missing tables.
-schema_file = /usr/share/nightwatcher/schema.sql
+schema_file = @CMAKE_INSTALL_PREFIX@/sql/schema.sql
 # Static web UI directory, served at /.
-web_root = /usr/share/nightwatcher/web
+web_root = @CMAKE_INSTALL_PREFIX@/web
 # Writes require an admin login session (an 'admin'/'admin' account is seeded on first
 # start; change the password). An optional static token for scripts may be set via
 # NW_API_TOKEN (never stored here). Bound off localhost, ALL requests (reads

@@ -1,0 +1,29 @@
+#!/bin/sh
+# ---------------------------------------------------------------------------
+# Uninstall NightWatcher2 (self-contained bundle installed under
+# @CMAKE_INSTALL_PREFIX@). Removes the bundle and its PATH/systemd symlinks.
+# Leaves /etc/nightwatcher (your config + secrets) and the MariaDB database
+# untouched — remove those by hand if you really want them gone.
+# A copy of this script is installed at @CMAKE_INSTALL_PREFIX@/uninstall.sh.
+# ---------------------------------------------------------------------------
+set -e
+PREFIX="@CMAKE_INSTALL_PREFIX@"
+BINDIR="@NW_SYMLINK_BINDIR@"
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This must run as root (try: sudo $0)" >&2
+    exit 1
+fi
+
+echo "Stopping and disabling the service..."
+systemctl disable --now nightwatcherd 2>/dev/null || true
+rm -f /etc/systemd/system/nightwatcherd.service
+systemctl daemon-reload 2>/dev/null || true
+
+echo "Removing PATH symlinks..."
+for t in sqmctl nwdb nwexport-auth; do rm -f "$BINDIR/$t"; done
+
+echo "Removing the bundle at $PREFIX..."
+rm -rf "$PREFIX"
+
+echo "Done. Left in place: /etc/nightwatcher (config) and the MariaDB database."

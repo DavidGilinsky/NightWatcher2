@@ -1,0 +1,44 @@
+# ---------------------------------------------------------------------------
+# File:    cmake/nw_install_links.cmake.in
+# Purpose: Install-time actions that reach outside the bundle prefix so the
+#          self-contained install still works: put the CLIs on PATH, make the
+#          systemd unit discoverable, and seed /etc/nightwatcher config.
+#          Configured by CMake and run via install(SCRIPT). Honors DESTDIR.
+# ---------------------------------------------------------------------------
+set(PREFIX "@CMAKE_INSTALL_PREFIX@")
+set(SYMLINK_BINDIR "@NW_SYMLINK_BINDIR@")
+set(EXAMPLE "@CMAKE_CURRENT_BINARY_DIR@/nightwatcher.conf.example")
+set(CMAKE "@CMAKE_COMMAND@")
+set(DESTDIR "$ENV{DESTDIR}")
+
+# 1) CLI symlinks on PATH (the daemon is launched by systemd via absolute path).
+file(MAKE_DIRECTORY "${DESTDIR}${SYMLINK_BINDIR}")
+foreach(tool sqmctl nwdb nwexport-auth)
+  if(EXISTS "${DESTDIR}${PREFIX}/bin/${tool}")
+    file(REMOVE "${DESTDIR}${SYMLINK_BINDIR}/${tool}")
+    execute_process(COMMAND "${CMAKE}" -E create_symlink
+      "${PREFIX}/bin/${tool}" "${DESTDIR}${SYMLINK_BINDIR}/${tool}")
+    message(STATUS "Symlink: ${SYMLINK_BINDIR}/${tool} -> ${PREFIX}/bin/${tool}")
+  endif()
+endforeach()
+
+# 2) systemd unit into a searched path (systemd does not look inside the prefix).
+file(MAKE_DIRECTORY "${DESTDIR}/etc/systemd/system")
+file(REMOVE "${DESTDIR}/etc/systemd/system/nightwatcherd.service")
+execute_process(COMMAND "${CMAKE}" -E create_symlink
+  "${PREFIX}/lib/systemd/system/nightwatcherd.service"
+  "${DESTDIR}/etc/systemd/system/nightwatcherd.service")
+message(STATUS "Symlink: /etc/systemd/system/nightwatcherd.service -> ${PREFIX}/lib/systemd/system/nightwatcherd.service")
+
+# 3) Seed /etc/nightwatcher config, never clobbering an existing one.
+file(MAKE_DIRECTORY "${DESTDIR}/etc/nightwatcher")
+if(EXISTS "${DESTDIR}/etc/nightwatcher/nightwatcher.conf")
+  message(STATUS "/etc/nightwatcher/nightwatcher.conf exists - left unchanged")
+else()
+  configure_file("${EXAMPLE}" "${DESTDIR}/etc/nightwatcher/nightwatcher.conf" COPYONLY)
+  message(STATUS "Seeded /etc/nightwatcher/nightwatcher.conf - edit it, then put "
+                 "NW_DB_PASSWORD=... in /etc/nightwatcher/nightwatcher.env (mode 0600)")
+endif()
+
+message(STATUS "NightWatcher2 installed under ${PREFIX}. Next: "
+               "systemctl daemon-reload && systemctl enable --now nightwatcherd")
