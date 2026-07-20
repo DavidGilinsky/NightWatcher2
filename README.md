@@ -3,7 +3,7 @@
   File:          README.md
   Purpose:       Project overview, build instructions, and repository layout.
   Created:       2026-07-18
-  Last Modified: 2026-07-18
+  Last Modified: 2026-07-20
   Version:       0.1.0
   License:       GPL-3.0-or-later
 -->
@@ -16,19 +16,23 @@ operated by the Southern Arizona Dark Sky Association.
 
 SQMs measure sky brightness (magnitude per square arc-second).
 NightWatcher2 reads them, stores the readings in a time-series database, and exposes
-that data through an API and a web UI. It can also automatically upload data to the
+that data through an API and a web UI. It can also automatically upload data to the DSN shared storage.
 
 ## Components
 
 | Component | Description | Status |
 |-----------|-------------|--------|
-| `nightwatcherd` | Daemon: polls active DB sensors on their interval, records readings, logs events | Polling done (M3); API pending |
-| SQM device library | Talk to SQM-LE (Ethernet) and SQM-LU (USB); parse the Unihedron protocol; subnet discovery | SQM-LE + discovery done (M1); USB serial pending |
-| `sqmctl` | CLI to discover and query a single SQM | Done (M1) |
-| Database | MariaDB store (libmariadb) for readings + configuration/calibration history | Done (M2) |
-| `nwdb` | CLI to register sensors, poll an SQM into the database, and query readings | Done (M2) |
-| REST API | Embedded HTTP server (JSON): CRUD, query, DB setup/maintenance, live poll/discover | Core done (M4) |
-| Web UI | Login, status dashboard, sensor/weather config, query, time-series graph, users, DB maintenance | Done (M5) |
+| SQM device library | Talk to **SQM-LE** (Ethernet/TCP) and **SQM-LU** (USB serial); parse the Unihedron protocol; network + USB discovery; calibration control | Done |
+| `sqmctl` | CLI to discover and query a single SQM over TCP or serial | Done |
+| Database | MariaDB (`libmariadb`) store — readings, sensors, calibration/config history, weather, exports, auth, settings (11 tables) | Done |
+| `nwdb` | CLI to register sensors, poll an SQM into the DB, and query readings | Done |
+| `nightwatcherd` | Daemon: polls active sensors + weather stations on their intervals, records readings, runs scheduled exports, serves the API/UI | Done |
+| REST API | Embedded HTTP/JSON: auth, sensor/weather CRUD, readings/query, live poll/test/discover, calibration, exports, server settings; optional HTTPS | Done |
+| Web UI | Login, dashboard, sensor/weather management, query + time-series graph, sensor test + calibration, DSN export, users, DB + server settings | Done |
+| Weather | Modular pull providers (Ambient Weather, Weather Underground) normalized to SI | Done |
+| DSN export | Modular exporters — DSN community `.dat` format uploaded to Google Drive on a schedule | Done |
+| Security | Admin login (PBKDF2), off-localhost read-auth, optional self-signed HTTPS/TLS | Done |
+| Packaging | `.deb` for amd64 + arm64 (Raspberry Pi); systemd unit; udev rule for USB access | Done |
 
 ## Building
 
@@ -58,31 +62,36 @@ cmake --build build-arm64 --parallel
 
 ## Talking to an SQM (`sqmctl`)
 
-`sqmctl` finds SQM-LE units on the network and queries them over TCP.
+`sqmctl` discovers and queries SQM-LE units over the network (TCP, default port 10001) and
+SQM-LU units over USB serial (115200 8N1).
 
-### Finding a unit on the network
+### Finding a unit
 
-If the SQM-LE picked up an unknown IP address via DHCP, scan its subnet. Each host is
-probed on port 10001 and confirmed with a unit-info (`ix`) query, so only real SQMs are
-reported:
+If an SQM-LE picked up an unknown IP via DHCP, scan its subnet — each host is probed on
+port 10001 and confirmed with a unit-info (`ix`) query, so only real SQMs are reported.
+`discover-usb` does the same for USB SQM-LUs by probing the local serial ports:
 
 ```sh
 sqmctl discover 192.168.1.0/24
-# Found 1 SQM(s):
 #   192.168.1.73:10001  serial=00000413 model=3 feature=1 protocol=2
+sqmctl discover-usb
+#   /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXX-if00-port0  serial=00007475 ...
 ```
 
-Options: `--port N` (default 10001), `--timeout MS` (default 700), `--concurrency N`
+Subnet options: `--port N` (default 10001), `--timeout MS` (default 700), `--concurrency N`
 (default 128). A /24 scans in roughly a second.
 
 ### Querying a unit
 
 ```sh
-sqmctl --tcp 192.168.1.50:10001 info    # unit info        (ix)
-sqmctl --tcp 192.168.1.50:10001 read    # averaged reading (rx)
-sqmctl --tcp 192.168.1.50 unaveraged    # unaveraged read  (ux)
-sqmctl --tcp 192.168.1.50 cal           # calibration info (cx)
+sqmctl --tcp 192.168.1.50:10001 info               # unit info        (ix)
+sqmctl --tcp 192.168.1.50:10001 read               # averaged reading (rx)
+sqmctl --serial /dev/ttyUSB0 read                  # same, over USB   (SQM-LU)
+sqmctl --serial /dev/ttyUSB0 cal                   # calibration info (cx)
 ```
+
+Both transports accept `info`, `read`, `unaveraged`, and `cal`. USB devices need
+read/write on the port (the `dialout` group; the `.deb` handles this).
 
 ### Testing without hardware
 
@@ -98,10 +107,12 @@ exercised end-to-end without a physical meter:
 
 Readings and configuration are stored in MariaDB via MariaDB Connector/C (`libmariadb`).
 
-The schema ([sql/schema.sql](sql/schema.sql)) has six tables: `sensors`, `readings` (with a
-`quality` flag for saturated/suspect data), `config_log`, an operational `events` log, and
-`weather_stations` / `weather_readings` for a co-located weather station such as an Ambient
-Weather WS-2000 (polling is a future module). Stored units are metric/SI.
+The schema ([sql/schema.sql](sql/schema.sql)) has 11 tables: `sensors`, `readings` (with a
+`quality` flag for saturated/suspect data), `config_log` (calibration/config history), an
+operational `events` log, `weather_stations` / `weather_readings` (a co-located weather station
+such as an Ambient Weather WS-2000, polled by the daemon), `users` / `sessions` (API/UI auth),
+`export_targets` / `export_log` (scheduled DSN uploads), and `settings` (runtime server config).
+Stored units are metric/SI.
 
 ### One-time setup
 
@@ -122,28 +133,33 @@ export NW_DB_USER=nightwatcher NW_DB_PASSWORD=nightwatcher NW_DB_NAME=nightwatch
 ### `nwdb`
 
 Register a sensor with full site metadata (serial/protocol/feature are auto-filled from the
-device via `ix` unless `--no-probe`):
+device via `ix` unless `--no-probe`). New sensors are added **disabled** — verify them first,
+then enable database population:
 
 ```sh
 nwdb add-sensor DSN003 --tcp 172.22.4.112:10001 \
      --name Sugarloaf --site "Sugarloaf Peak" \
      --lat 31.9500 --lon -111.6000 --elev 1200 \
      --timezone America/Phoenix --installed 2026-07-18
-nwdb set-sensor DSN003 --elev 1205    # partial edit — only elevation changes
-nwdb show DSN003                      # full metadata for one sensor
-nwdb sensors                          # list registered sensors
-nwdb poll DSN003                      # read the SQM now and store the reading
-nwdb readings DSN003                  # show recent stored readings
-nwdb cal DSN003                       # read + store calibration
+nwdb add-sensor DSN006 --serial /dev/ttyUSB0 --name "USB unit"   # SQM-LU over USB
+nwdb set-sensor DSN003 --status active   # enable polling (starts DB population)
+nwdb set-sensor DSN003 --elev 1205       # partial edit — only elevation changes
+nwdb show DSN003                         # full metadata for one sensor
+nwdb sensors                             # list registered sensors
+nwdb poll DSN003                         # read the SQM now and store the reading
+nwdb readings DSN003                     # show recent stored readings
+nwdb cal DSN003                          # read + store calibration
 ```
 
 ## API
 
 `nightwatcherd` serves a JSON API on `[api] bind:port` (default `127.0.0.1:8080`), sharing
-the same `nw_db` layer as `nwdb` — so the web UI drives the same code. **Reads are open**
-(sensor data is public); **writes require an `admin` login session** or the optional static
-`NW_API_TOKEN`. On first start the daemon seeds an `admin` account (password `admin`, flagged
-must-change).
+the same `nw_db` layer as `nwdb` — so the web UI drives the same code. **Writes require an
+`admin` login session** (cookie) or the optional static `NW_API_TOKEN`; **reads are open from
+localhost, but also require that login/token once the server is bound off localhost.** On first
+start the daemon seeds an `admin` account (password `admin`, flagged must-change). The server
+can also present **HTTPS** with an auto-generated self-signed certificate (`[api] tls = on`, or
+the web UI's Server tab); bind address, port, and TLS are editable at runtime.
 
 Log in (cookie-based sessions), then use the cookie — or the token the login returns — for writes:
 
@@ -172,8 +188,11 @@ curl -s -X POST  localhost:8080/api/v1/sensors/DSN003/poll -H "$AUTH"
 curl -s -X POST  localhost:8080/api/v1/db/init -H "$AUTH"     # create any missing tables
 ```
 
-Also: weather-station CRUD (`/api/v1/weather-stations`), `GET /db/status`, and
-`DELETE /sensors/{id}/readings?before=DATE` (pruning).
+Beyond the basics above, the API also covers: sensor **test** (a non-persisting self-check) and
+**enable/disable**; **calibration** read/record/arm/disarm/set with history; **weather-station**
+CRUD + live poll; **DSN export** targets, run-now, and logs; USB **discovery**
+(`GET /discover/usb`); **server settings** (bind/port/TLS + restart-to-apply); and DB maintenance
+(`GET /db/status`, `POST /db/init`, `DELETE /sensors/{id}/readings?before=DATE`).
 
 ## Installing
 
@@ -222,11 +241,14 @@ in the database** with `nwdb add-sensor` (or the API), and each sensor's cadence
 ## Web UI
 
 With `web_root` set (default `/usr/local/nightwatcher/web`), the daemon serves a browser UI at
-`http://<host>:<api-port>/` — static HTML/JS (dark theme, uPlot graph, no external CDNs) talking to
-the API. It provides a login page (default `admin`/`admin`, must-change on first login), a live
-status **dashboard**, **sensor** and **weather-station** management, a readings **query with a
-time-series graph**, an **events** log, **user** management, and **database** maintenance
-(schema status/init, pruning). Admin-only controls are hidden for `viewer` accounts.
+`http://<host>:<api-port>/` (or `https://` with TLS on) — static HTML/JS (dark theme, uPlot graph,
+no external CDNs) talking to the API. It provides a login page (default `admin`/`admin`,
+must-change on first login), a live status **dashboard**, **sensor** management (add over the
+network or via a USB scan, a non-persisting **Test**, **Calibrate**, and enable/disable),
+**weather-station** management, a readings **query with a time-series graph** (and DSN-format
+download), **DSN export** configuration, an **events** log, **user** management, **database**
+maintenance (schema status/init, pruning), and a **server** tab (listen address, port, HTTPS).
+Admin-only controls are hidden for `viewer` accounts.
 
 ## Running the daemon
 
@@ -249,17 +271,22 @@ put the database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASS
 ## Repository layout
 
 ```
-src/sqm/      SQM device library (transports + protocol codec)
-src/db/       database access layer
-src/api/      embedded HTTP server + REST handlers
+src/sqm/      SQM device library (TCP + serial transports, protocol codec, discovery)
+src/db/       database access layer (libmariadb)
+src/auth/     password hashing (PBKDF2) + session tokens
+src/api/      embedded HTTP/HTTPS server + REST handlers
+src/weather/  pull-based weather providers (Ambient, Weather Underground)
+src/export/   DSN .dat formatter + Google Drive exporter + scheduler
 src/daemon/   nightwatcherd (scheduler, config, logging, main)
-src/cli/      sqmctl command-line tool
+src/cli/      sqmctl, nwdb, nwexport-auth
 include/      public headers
-web/          static web UI
-sql/          database schema + migrations
-config/       example config + systemd unit
+web/          static web UI (index.html, css, js, vendored uPlot)
+sql/          database schema + one-time setup
+config/       example config, systemd unit, udev rule (templated .in files)
+cmake/        ARM toolchain + install/uninstall helpers
+debian/       .deb maintainer scripts (postinst/prerm/postrm)
 docs/         architecture, SQM protocol, DSN notes
-tests/        unit tests
+tests/        unit + integration tests
 ```
 
 ## Documentation
