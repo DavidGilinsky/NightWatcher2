@@ -16,7 +16,8 @@ operated by the Southern Arizona Dark Sky Association.
 
 SQMs measure sky brightness (magnitude per square arc-second).
 NightWatcher2 reads them, stores the readings in a time-series database, and exposes
-that data through an API and a web UI. It can also automatically upload data to the DSN shared storage.
+that data through an API and a web UI. It can also automatically export data on a schedule —
+uploading to the DSN shared storage, and/or pushing to a companion WordPress site for public display.
 
 ## Components
 
@@ -30,7 +31,8 @@ that data through an API and a web UI. It can also automatically upload data to 
 | REST API | Embedded HTTP/JSON: auth, sensor/weather CRUD, readings/query, live poll/test/discover, calibration, exports, server settings; optional HTTPS | Done |
 | Web UI | Login, dashboard, sensor/weather management, query + time-series graph, sensor test + calibration, DSN export, users, DB + server settings | Done |
 | Weather | Modular pull providers (Ambient Weather, Weather Underground) normalized to SI | Done |
-| DSN export | Modular exporters — DSN community `.dat` format uploaded to Google Drive on a schedule | Done |
+| Data export | Modular scheduled exporters — DSN community `.dat` → Google Drive, or **webhook push** to an HTTP endpoint | Done |
+| WordPress connector | Companion plugin (`nightwatcher-wp`) receives the webhook push; serves a read-only, public date-range graph | Done |
 | Security | Admin login (PBKDF2), off-localhost read-auth, optional self-signed HTTPS/TLS | Done |
 | Packaging | `.deb` for amd64 + arm64 (Raspberry Pi); systemd unit; udev rule for USB access | Done |
 
@@ -190,7 +192,7 @@ curl -s -X POST  localhost:8080/api/v1/db/init -H "$AUTH"     # create any missi
 
 Beyond the basics above, the API also covers: sensor **test** (a non-persisting self-check) and
 **enable/disable**; **calibration** read/record/arm/disarm/set with history; **weather-station**
-CRUD + live poll; **DSN export** targets, run-now, and logs; USB **discovery**
+CRUD + live poll; **export** targets (DSN `.dat`→Drive or webhook push), run-now, and logs; USB **discovery**
 (`GET /discover/usb`); **server settings** (bind/port/TLS + restart-to-apply); and DB maintenance
 (`GET /db/status`, `POST /db/init`, `DELETE /sensors/{id}/readings?before=DATE`).
 
@@ -261,12 +263,52 @@ export NW_DB_PASSWORD=nightwatcher
 ./build/nightwatcherd --config build/nightwatcher.conf.example
 ```
 
-Signals: `SIGTERM` / `SIGINT` shut down gracefully; `SIGHUP` reloads the sensor list (so a
-sensor added via `nwdb` is picked up without a restart). Under systemd (the unit is installed and
+Signals: `SIGTERM` / `SIGINT` shut down gracefully; `SIGHUP` reloads active sensors, weather
+stations, and export targets (so anything added via `nwdb` or the API is picked up without a
+restart — the API triggers this automatically on such changes). Under systemd (the unit is installed and
 enabled as above, from [`config/systemd/nightwatcherd.service.in`](config/systemd/nightwatcherd.service.in)),
 put the database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASSWORD=...` (mode
 `0600`). The unit runs as a `DynamicUser` in the `dialout` group so it can reach a USB SQM-LU on
 `/dev/ttyUSB*`.
+
+## Data export
+
+Export **targets** live in the database (`export_targets`) and are run by the daemon on a schedule
+(nightly at a local time, or a fixed interval), each tracking a watermark so it only sends new
+readings; every run is recorded in `export_log`. Two target types ship today:
+
+- **`dsn`** — builds the DSN *Community Standard Skyglow* `.dat` file for the month and uploads it
+  to **Google Drive** (OAuth; authorize once with `nwexport-auth`). Configured from the web UI's
+  export tab or the API.
+- **`webhook`** — **pushes** readings (incrementally, since the watermark) to an HTTP endpoint as
+  JSON with a bearer token, chunked for large backfills. This feeds the WordPress connector below,
+  and is configured via the export-targets API:
+
+  ```sh
+  curl -s -b jar -X POST localhost:8080/api/v1/export-targets \
+    -d '{"id":"wp-036","sensor_id":"DSN003","target":"webhook","schedule":"interval",
+         "interval_s":300,"status":"active",
+         "config":{"url":"https://example.com/wp-json/nightwatcher/v1/ingest",
+                   "token":"<bearer>","site_id":"DSN003-S"}}'
+  curl -s -b jar -X POST localhost:8080/api/v1/export-targets/wp-036/run   # push now
+  ```
+
+  Secrets in a target's `config` (tokens, OAuth keys) are stored server-side and returned masked (`***`).
+
+### WordPress connector — [`nightwatcher-wp`](https://github.com/DavidGilinsky/nightwatcher-wp)
+
+A companion WordPress plugin (separate repository) that receives the `webhook` push and gives a
+site **read-only**, public access to the data. The daemon POSTs to the plugin's authenticated REST
+endpoint (`/wp-json/nightwatcher/v1/ingest`); the plugin stores the readings (de-duplicated on
+`sensor_id + ts_utc`) and renders a date-range sky-brightness graph via a shortcode:
+
+```
+[nightwatcher_graph sensor="DSN003" days="7"]
+```
+
+Because NightWatcher **pushes**, the daemon can stay on a private LAN — nothing needs to reach
+inward to it. Generate the bearer token in the plugin's *Settings → NightWatcher SQM* and use it as
+the target's `config.token`.
 
 ## Repository layout
 
@@ -276,7 +318,7 @@ src/db/       database access layer (libmariadb)
 src/auth/     password hashing (PBKDF2) + session tokens
 src/api/      embedded HTTP/HTTPS server + REST handlers
 src/weather/  pull-based weather providers (Ambient, Weather Underground)
-src/export/   DSN .dat formatter + Google Drive exporter + scheduler
+src/export/   exporters (DSN .dat -> Google Drive, webhook push) + scheduler
 src/daemon/   nightwatcherd (scheduler, config, logging, main)
 src/cli/      sqmctl, nwdb, nwexport-auth
 include/      public headers
