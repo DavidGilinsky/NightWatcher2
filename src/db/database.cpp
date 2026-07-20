@@ -612,7 +612,7 @@ std::vector<WeatherReadingRow> Database::weather_readings(const std::string& sta
 namespace {
 const char* const kExportCols =
     "id, sensor_id, name, target, config, schedule, schedule_time, interval_s, "
-    "last_export_ts, status, notes, created_at";
+    "last_export_ts, status, notes, created_at, schedule_day";
 
 ExportTargetRow export_from_row(MYSQL_ROW row) {
     ExportTargetRow t;
@@ -628,6 +628,7 @@ ExportTargetRow export_from_row(MYSQL_ROW row) {
     t.status = row[9] ? row[9] : "";
     t.notes = row[10] ? row[10] : "";
     t.created_at = row[11] ? row[11] : "";
+    if (row[12]) t.schedule_day = std::atoi(row[12]);
     return t;
 }
 
@@ -659,7 +660,7 @@ void Database::upsert_export_target(const std::string& id, const ExportTargetFie
     };
     addS("sensor_id", f.sensor_id); addS("name", f.name); addS("target", f.target);
     addS("config", f.config); addS("schedule", f.schedule); addS("schedule_time", f.schedule_time);
-    addI("interval_s", f.interval_s); addS("status", f.status); addS("notes", f.notes);
+    addI("interval_s", f.interval_s); addI("schedule_day", f.schedule_day); addS("status", f.status); addS("notes", f.notes);
 
     std::ostringstream q;
     q << "INSERT INTO export_targets (";
@@ -681,7 +682,7 @@ bool Database::update_export_target(const std::string& id, const ExportTargetFie
     const auto setI = [&](const char* c, const std::optional<int>& v) { if (v) sets.push_back(std::string(c) + "=" + std::to_string(*v)); };
     setS("sensor_id", f.sensor_id); setS("name", f.name); setS("target", f.target);
     setS("config", f.config); setS("schedule", f.schedule); setS("schedule_time", f.schedule_time);
-    setI("interval_s", f.interval_s); setS("status", f.status); setS("notes", f.notes);
+    setI("interval_s", f.interval_s); setI("schedule_day", f.schedule_day); setS("status", f.status); setS("notes", f.notes);
     if (sets.empty()) return true;
     std::ostringstream q;
     q << "UPDATE export_targets SET ";

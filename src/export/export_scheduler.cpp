@@ -99,10 +99,17 @@ void ExportScheduler::worker(db::ExportTargetRow t) {
         int wait_s;
         if (cur->schedule == "interval") {
             wait_s = (cur->interval_s && *cur->interval_s > 0) ? *cur->interval_s : 3600;
-        } else {  // nightly
+        } else {  // nightly / weekly / monthly — a local time-of-day (+ day) schedule
             const auto [h, m] = parse_hhmm(cur->schedule_time);
             const time_t now = tu::utc_now();
-            const time_t next = tu::next_local_hhmm_utc(h, m, tz, now);
+            time_t next;
+            if (cur->schedule == "weekly") {
+                next = tu::next_local_weekly_utc(cur->schedule_day.value_or(0), h, m, tz, now);
+            } else if (cur->schedule == "monthly") {
+                next = tu::next_local_monthly_utc(cur->schedule_day.value_or(1), h, m, tz, now);
+            } else {  // nightly
+                next = tu::next_local_hhmm_utc(h, m, tz, now);
+            }
             wait_s = static_cast<int>(next - now);
             if (wait_s < 1) wait_s = 1;
         }

@@ -191,9 +191,10 @@ CREATE TABLE IF NOT EXISTS export_targets (
     name            VARCHAR(128) NULL,
     target          VARCHAR(32)  NOT NULL,               -- 'dsn' | 'globeatnight'
     config          TEXT         NULL,                   -- JSON endpoint settings (may include secrets)
-    schedule        ENUM('nightly','manual','interval') NOT NULL DEFAULT 'nightly',
-    schedule_time   VARCHAR(5)   NULL,                   -- 'HH:MM' local, for the nightly schedule
+    schedule        ENUM('nightly','manual','interval','weekly','monthly') NOT NULL DEFAULT 'nightly',
+    schedule_time   VARCHAR(5)   NULL,                   -- 'HH:MM' local (nightly/weekly/monthly)
     interval_s      INT          NULL,                   -- period for the 'interval' schedule
+    schedule_day    INT          NULL,                   -- weekly: day-of-week (0=Sun..6=Sat); monthly: day-of-month (1-28)
     last_export_ts  DATETIME     NULL,                   -- watermark: newest reading ts_utc exported
     status          ENUM('active','inactive','retired') NOT NULL DEFAULT 'active',
     notes           TEXT         NULL,
@@ -235,3 +236,5 @@ CREATE TABLE IF NOT EXISTS settings (
 -- Migrations for existing databases (idempotent; MariaDB IF NOT EXISTS).
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NULL;
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS config   TEXT        NULL;
+ALTER TABLE export_targets   ADD COLUMN IF NOT EXISTS schedule_day INT NULL;
+ALTER TABLE export_targets   MODIFY COLUMN schedule ENUM('nightly','manual','interval','weekly','monthly') NOT NULL DEFAULT 'nightly';

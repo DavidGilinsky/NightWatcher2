@@ -36,6 +36,15 @@ function el(tag, attrs, ...kids) {
 function msg(kind, text) { return el('div', { class: 'msg ' + kind }, text); }
 function fmtNum(x) { return x == null ? '—' : (Math.round(x * 10) / 10).toString(); }
 function fmtMag(x) { return x == null ? '—' : Number(x).toFixed(2); }
+const NW_DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function fmtSchedule(x) {
+  const t = x.schedule_time || '';
+  if (x.schedule === 'nightly') return `nightly ${t}`.trim();
+  if (x.schedule === 'weekly') return `weekly ${NW_DOW[x.schedule_day] || 'Sun'} ${t}`.trim();
+  if (x.schedule === 'monthly') return `monthly day ${x.schedule_day || 1} ${t}`.trim();
+  if (x.schedule === 'interval') return `every ${x.interval_s || '?'}s`;
+  return 'manual';
+}
 
 function table(cols, rows) {
   return el('table', { class: 'tbl' },
@@ -972,18 +981,35 @@ function exportForm(x, sensors) {
     ...Object.entries(EXPORT_TARGETS).map(([v, l]) => el('option', { value: v, selected: editing && x.target === v ? 'selected' : null }, l)));
   g.append(el('label', {}, 'Target', targetSel));
   const schedSel = el('select', { name: 'schedule' },
-    ...['nightly', 'manual', 'interval'].map(o => el('option', { value: o, selected: editing && x.schedule === o ? 'selected' : null }, o)));
+    ...['nightly', 'weekly', 'monthly', 'interval', 'manual'].map(o => el('option', { value: o, selected: editing && x.schedule === o ? 'selected' : null }, o)));
   g.append(el('label', {}, 'Schedule', schedSel));
-  const timeField = field('Nightly time (local HH:MM)', 'schedule_time', editing ? (x.schedule_time || '06:00') : '06:00');
+  const timeField = field('Time (local HH:MM)', 'schedule_time', editing ? (x.schedule_time || '06:00') : '06:00');
   const intervalField = field('Interval (s)', 'interval_s', editing && x.interval_s ? x.interval_s : 3600, 'number', '1');
-  g.append(timeField); g.append(intervalField);
+  const daySel = el('select', { name: 'schedule_day' });
+  const dayLabel = el('span', {}, 'Day');
+  const dayField = el('label', {}, dayLabel, daySel);
+  const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const fillDays = () => {
+    const weekly = schedSel.value === 'weekly';
+    dayLabel.textContent = weekly ? 'Day of week' : 'Day of month';
+    const cur = editing && x.schedule_day != null ? Number(x.schedule_day) : (weekly ? 0 : 1);
+    daySel.innerHTML = '';
+    if (weekly) DOW.forEach((n, i) => daySel.append(el('option', { value: i, selected: i === cur ? 'selected' : null }, n)));
+    else for (let d = 1; d <= 28; d++) daySel.append(el('option', { value: d, selected: d === cur ? 'selected' : null }, String(d)));
+  };
+  g.append(timeField); g.append(dayField); g.append(intervalField);
   const statusSel = el('select', { name: 'status' },
     ...['active', 'inactive', 'retired'].map(o => el('option', { value: o, selected: editing && x.status === o ? 'selected' : null }, o)));
   g.append(el('label', {}, 'Status', statusSel));
   f.append(g);
   const toggleSched = () => {
-    timeField.style.display = schedSel.value === 'nightly' ? '' : 'none';
-    intervalField.style.display = schedSel.value === 'interval' ? '' : 'none';
+    const s = schedSel.value;
+    const dayed = s === 'weekly' || s === 'monthly';
+    timeField.style.display = (s === 'nightly' || dayed) ? '' : 'none';
+    intervalField.style.display = s === 'interval' ? '' : 'none';
+    dayField.style.display = dayed ? '' : 'none';
+    daySel.disabled = !dayed;
+    if (dayed) fillDays();
   };
   schedSel.addEventListener('change', toggleSched); toggleSched();
 
@@ -1029,7 +1055,7 @@ function exportForm(x, sensors) {
     for (const [k, v] of fd.entries()) {
       if (k.startsWith('cfg_') || k.startsWith('oauth_') || k === 'sa_json') continue;
       if (v === '') continue;
-      body[k] = (k === 'interval_s') ? Number(v) : v;
+      body[k] = (k === 'interval_s' || k === 'schedule_day') ? Number(v) : v;
     }
     const config = {};
     if (fd.get('cfg_site_id')) config.site_id = fd.get('cfg_site_id');
@@ -1073,7 +1099,7 @@ async function viewExports() {
     { label: 'ID', render: x => x.id },
     { label: 'Sensor', render: x => x.sensor_id },
     { label: 'Target', render: x => EXPORT_TARGETS[x.target] || x.target },
-    { label: 'Schedule', render: x => x.schedule === 'nightly' ? `nightly ${x.schedule_time || ''}` : (x.schedule === 'interval' ? `every ${x.interval_s || '?'}s` : 'manual') },
+    { label: 'Schedule', render: x => fmtSchedule(x) },
     { label: 'Last export', render: x => x.last_export_ts || '—' },
     { label: 'Status', render: x => el('span', { class: 'pill ' + (x.status || '') }, x.status) },
   ];

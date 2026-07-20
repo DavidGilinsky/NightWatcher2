@@ -139,4 +139,37 @@ time_t next_local_hhmm_utc(int hour, int minute, const std::string& tz, time_t n
     return cand;
 }
 
+time_t next_local_weekly_utc(int wday, int hour, int minute, const std::string& tz, time_t now) {
+    if (wday < 0) wday = 0;
+    if (wday > 6) wday = 6;
+    std::tm target = local_tm(now, tz);
+    const int delta = (wday - target.tm_wday + 7) % 7;  // days until the target weekday
+    target.tm_mday += delta;
+    target.tm_hour = hour;
+    target.tm_min = minute;
+    target.tm_sec = 0;
+    time_t cand = tz_mktime(target, tz);
+    if (cand <= now) {
+        target.tm_mday += 7;  // next week (mktime normalizes)
+        cand = tz_mktime(target, tz);
+    }
+    return cand;
+}
+
+time_t next_local_monthly_utc(int mday, int hour, int minute, const std::string& tz, time_t now) {
+    if (mday < 1) mday = 1;
+    if (mday > 28) mday = 28;  // clamp to a day that exists in every month
+    std::tm target = local_tm(now, tz);
+    target.tm_mday = mday;
+    target.tm_hour = hour;
+    target.tm_min = minute;
+    target.tm_sec = 0;
+    time_t cand = tz_mktime(target, tz);
+    if (cand <= now) {
+        target.tm_mon += 1;  // next month (mktime normalizes year)
+        cand = tz_mktime(target, tz);
+    }
+    return cand;
+}
+
 }  // namespace nightwatcher::exporter::timeutil

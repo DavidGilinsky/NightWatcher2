@@ -255,6 +255,7 @@ json to_json(const db::ExportTargetRow& t) {
                 {"schedule", t.schedule},
                 {"schedule_time", t.schedule_time},
                 {"interval_s", j_opt(t.interval_s)},
+                {"schedule_day", j_opt(t.schedule_day)},
                 {"last_export_ts", t.last_export_ts},
                 {"status", t.status},
                 {"notes", t.notes},
@@ -324,7 +325,7 @@ db::ExportTargetFields export_fields_from_json(const json& b) {
     };
     s("sensor_id", f.sensor_id); s("name", f.name); s("target", f.target);
     s("schedule", f.schedule); s("schedule_time", f.schedule_time);
-    i("interval_s", f.interval_s); s("status", f.status); s("notes", f.notes);
+    i("interval_s", f.interval_s); i("schedule_day", f.schedule_day); s("status", f.status); s("notes", f.notes);
     return f;
 }
 

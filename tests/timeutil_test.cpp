@@ -31,6 +31,18 @@ static std::string next_hhmm(const std::string& now_utc, int h, int m) {
     return tu::fmt_sql_utc(tu::next_local_hhmm_utc(h, m, "America/Phoenix", now));
 }
 
+static std::string next_weekly(const std::string& now_utc, int wday, int h, int m) {
+    time_t now = 0;
+    tu::parse_sql_utc(now_utc, now);
+    return tu::fmt_sql_utc(tu::next_local_weekly_utc(wday, h, m, "America/Phoenix", now));
+}
+
+static std::string next_monthly(const std::string& now_utc, int mday, int h, int m) {
+    time_t now = 0;
+    tu::parse_sql_utc(now_utc, now);
+    return tu::fmt_sql_utc(tu::next_local_monthly_utc(mday, h, m, "America/Phoenix", now));
+}
+
 int main() {
     const std::string PHX = "America/Phoenix";  // fixed UTC-7
 
@@ -58,6 +70,16 @@ int main() {
     // next nightly run at 06:00 local.
     CHECK(next_hhmm("2026-07-18 10:00:00", 6, 0) == "2026-07-18 13:00:00");  // 03:00 local -> today 06:00
     CHECK(next_hhmm("2026-07-19 04:00:00", 6, 0) == "2026-07-19 13:00:00");  // 21:00 local -> tomorrow 06:00
+
+    // next weekly run at 06:00 local — now is local Sat 2026-07-18 21:00.
+    CHECK(next_weekly("2026-07-19 04:00:00", 0, 6, 0) == "2026-07-19 13:00:00");  // Sun -> tomorrow
+    CHECK(next_weekly("2026-07-19 04:00:00", 6, 6, 0) == "2026-07-25 13:00:00");  // Sat 06:00 passed -> +7d
+    CHECK(next_weekly("2026-07-19 04:00:00", 3, 6, 0) == "2026-07-22 13:00:00");  // Wed later this week
+
+    // next monthly run at 06:00 local — now is local 2026-07-18 21:00.
+    CHECK(next_monthly("2026-07-19 04:00:00", 1, 6, 0) == "2026-08-01 13:00:00");   // 1st passed -> next month
+    CHECK(next_monthly("2026-07-19 04:00:00", 20, 6, 0) == "2026-07-20 13:00:00");  // 20th still ahead
+    CHECK(next_monthly("2026-07-19 04:00:00", 18, 6, 0) == "2026-08-18 13:00:00");  // 18th 06:00 passed -> next month
 
     if (g_failures == 0) {
         std::puts("timeutil_test passed");

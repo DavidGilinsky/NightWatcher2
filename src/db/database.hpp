@@ -146,9 +146,10 @@ struct ExportTargetRow {
     std::string name;
     std::string target;         // "dsn" | "globeatnight"
     std::string config;         // JSON endpoint settings (secrets masked when served)
-    std::string schedule;       // "nightly" | "manual" | "interval"
-    std::string schedule_time;  // "HH:MM" local (nightly), or empty
+    std::string schedule;       // "nightly" | "manual" | "interval" | "weekly" | "monthly"
+    std::string schedule_time;  // "HH:MM" local (nightly/weekly/monthly), or empty
     std::optional<int> interval_s;
+    std::optional<int> schedule_day;  // weekly: 0=Sun..6=Sat; monthly: day-of-month 1-28
     std::string last_export_ts; // watermark (UTC) or empty
     std::string status;
     std::string notes;
@@ -164,6 +165,7 @@ struct ExportTargetFields {
     std::optional<std::string> schedule;
     std::optional<std::string> schedule_time;
     std::optional<int>         interval_s;
+    std::optional<int>         schedule_day;
     std::optional<std::string> status;
     std::optional<std::string> notes;
 };
