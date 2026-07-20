@@ -1,10 +1,11 @@
 # ---------------------------------------------------------------------------
 # Author:        David Gilinsky
 # File:          .github/workflows/ci.yml
-# Purpose:       GitHub Actions CI: amd64 build/test (with a MariaDB service)
-#                and arm64 cross-compile (database layer disabled).
+# Purpose:       GitHub Actions CI: amd64 build/test (with a MariaDB service),
+#                arm64 cross-compile (database layer disabled), and .deb
+#                packaging (build + install/verify/purge) for amd64 and arm64.
 # Created:       2026-07-18
-# Last Modified: 2026-07-18
+# Last Modified: 2026-07-20
 # Version:       0.1.0
 # License:       GPL-3.0-or-later
 # ---------------------------------------------------------------------------
@@ -74,3 +75,48 @@ jobs:
           -DNW_WITH_DB=OFF
       - name: Build
         run: cmake --build build-arm64 --parallel
+
+  package-deb:
+    name: Package (.deb, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libmariadb-dev libssl-dev
+      # Payload-only build: the package's postinst creates the symlinks, seeds
+      # /etc, and enables the service (so NW_INSTALL_SYSTEM_LINKS is OFF here).
+      - name: Configure
+        run: cmake -B pkg -DNW_INSTALL_SYSTEM_LINKS=OFF -DNW_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build pkg --parallel
+      - name: Package
+        run: cd pkg && cpack -G DEB
+      - name: Install and verify integration
+        run: |
+          sudo apt-get install -y ./pkg/nightwatcher_*_${{ matrix.arch }}.deb
+          test -x /usr/local/nightwatcher/bin/nightwatcherd
+          test -L /usr/local/bin/sqmctl
+          sqmctl --version
+          test -f /etc/nightwatcher/nightwatcher.conf
+          test -L /etc/systemd/system/nightwatcherd.service
+          test -L /etc/udev/rules.d/99-nightwatcher-sqm.rules
+      - name: Purge and verify cleanup
+        run: |
+          sudo apt-get purge -y nightwatcher
+          test ! -e /usr/local/bin/sqmctl
+          test ! -e /etc/systemd/system/nightwatcherd.service
+          test ! -e /etc/nightwatcher
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightwatcher-${{ matrix.arch }}-deb
+          path: pkg/nightwatcher_*.deb
+          if-no-files-found: error

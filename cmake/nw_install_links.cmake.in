@@ -30,6 +30,14 @@ execute_process(COMMAND "${CMAKE}" -E create_symlink
   "${DESTDIR}/etc/systemd/system/nightwatcherd.service")
 message(STATUS "Symlink: /etc/systemd/system/nightwatcherd.service -> ${PREFIX}/lib/systemd/system/nightwatcherd.service")
 
+# 2b) udev rule into a searched path (SQM-LU USB access).
+file(MAKE_DIRECTORY "${DESTDIR}/etc/udev/rules.d")
+file(REMOVE "${DESTDIR}/etc/udev/rules.d/99-nightwatcher-sqm.rules")
+execute_process(COMMAND "${CMAKE}" -E create_symlink
+  "${PREFIX}/lib/udev/rules.d/99-nightwatcher-sqm.rules"
+  "${DESTDIR}/etc/udev/rules.d/99-nightwatcher-sqm.rules")
+message(STATUS "Symlink: /etc/udev/rules.d/99-nightwatcher-sqm.rules -> ${PREFIX}/lib/udev/rules.d/99-nightwatcher-sqm.rules")
+
 # 3) Seed /etc/nightwatcher config, never clobbering an existing one.
 file(MAKE_DIRECTORY "${DESTDIR}/etc/nightwatcher")
 if(EXISTS "${DESTDIR}/etc/nightwatcher/nightwatcher.conf")

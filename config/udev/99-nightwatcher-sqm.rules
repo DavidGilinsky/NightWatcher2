@@ -1,0 +1,9 @@
+# ---------------------------------------------------------------------------
+# NightWatcher2 - USB SQM (Unihedron SQM-LU) access.
+# The SQM-LU is an FTDI FT232R (VID:PID 0403:6001) presenting as /dev/ttyUSB*.
+# Ensure it is owned by the 'dialout' group, mode 0660, so the nightwatcherd
+# service (a DynamicUser placed in dialout) and dialout users can open it.
+# 0403:6001 is the generic FTDI id; this only sets group/mode (no rename), and
+# a stable name is already available at /dev/serial/by-id/.
+# ---------------------------------------------------------------------------
+SUBSYSTEM=="tty", SUBSYSTEMS=="usb", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", GROUP="dialout", MODE="0660"

@@ -1,0 +1,18 @@
+#!/bin/sh
+# NightWatcher2 post-removal: drop the symlinks we created in postinst; on purge
+# also remove /etc/nightwatcher (config, secrets, generated TLS certs).
+set -e
+SYMLINK_BINDIR="@NW_SYMLINK_BINDIR@"
+case "$1" in
+  remove|purge)
+    for tool in sqmctl nwdb nwexport-auth; do rm -f "$SYMLINK_BINDIR/$tool"; done
+    rm -f /etc/systemd/system/nightwatcherd.service
+    rm -f /etc/udev/rules.d/99-nightwatcher-sqm.rules
+    if command -v systemctl >/dev/null 2>&1; then systemctl daemon-reload >/dev/null 2>&1 || true; fi
+    if command -v udevadm >/dev/null 2>&1; then udevadm control --reload-rules >/dev/null 2>&1 || true; fi
+    ;;
+esac
+if [ "$1" = purge ]; then
+  rm -rf /etc/nightwatcher
+fi
+exit 0

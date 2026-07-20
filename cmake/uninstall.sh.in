@@ -19,6 +19,8 @@ echo "Stopping and disabling the service..."
 systemctl disable --now nightwatcherd 2>/dev/null || true
 rm -f /etc/systemd/system/nightwatcherd.service
 systemctl daemon-reload 2>/dev/null || true
+rm -f /etc/udev/rules.d/99-nightwatcher-sqm.rules
+udevadm control --reload-rules 2>/dev/null || true
 
 echo "Removing PATH symlinks..."
 for t in sqmctl nwdb nwexport-auth; do rm -f "$BINDIR/$t"; done

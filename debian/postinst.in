@@ -1,0 +1,54 @@
+#!/bin/sh
+# NightWatcher2 post-install: PATH/systemd/udev symlinks, /etc config seed,
+# USB (dialout) permissions, and systemd enablement.
+set -e
+
+PREFIX="@CMAKE_INSTALL_PREFIX@"
+SYMLINK_BINDIR="@NW_SYMLINK_BINDIR@"
+
+case "$1" in
+  configure)
+    # 1) CLI symlinks on PATH (the daemon is started by systemd via absolute path).
+    mkdir -p "$SYMLINK_BINDIR"
+    for tool in sqmctl nwdb nwexport-auth; do
+      [ -x "$PREFIX/bin/$tool" ] && ln -sf "$PREFIX/bin/$tool" "$SYMLINK_BINDIR/$tool"
+    done
+
+    # 2) systemd unit + udev rule into their searched paths.
+    ln -sf "$PREFIX/lib/systemd/system/nightwatcherd.service" /etc/systemd/system/nightwatcherd.service
+    ln -sf "$PREFIX/lib/udev/rules.d/99-nightwatcher-sqm.rules" /etc/udev/rules.d/99-nightwatcher-sqm.rules
+
+    # 3) Seed /etc config, never clobbering an existing one.
+    mkdir -p /etc/nightwatcher
+    if [ ! -e /etc/nightwatcher/nightwatcher.conf ]; then
+      cp "$PREFIX/share/nightwatcher.conf.example" /etc/nightwatcher/nightwatcher.conf
+    fi
+
+    # 4) USB SQM-LU access: apply the udev rule now, and give the installing
+    #    user serial access so they can run sqmctl interactively.
+    if command -v udevadm >/dev/null 2>&1; then
+      udevadm control --reload-rules >/dev/null 2>&1 || true
+      udevadm trigger --subsystem-match=tty >/dev/null 2>&1 || true
+    fi
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != root ]; then
+      if ! id -nG "${SUDO_USER}" 2>/dev/null | tr ' ' '\n' | grep -qx dialout; then
+        usermod -aG dialout "${SUDO_USER}" 2>/dev/null || true
+        echo "nightwatcher: added ${SUDO_USER} to group 'dialout' (log out/in for it to take effect)."
+      fi
+    fi
+
+    # 5) systemd: load the unit and enable it. Start is left to the operator so
+    #    a first install without a configured database does not crash-loop.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl daemon-reload >/dev/null 2>&1 || true
+      systemctl enable nightwatcherd.service >/dev/null 2>&1 || true
+    fi
+
+    echo "nightwatcher: next steps ->"
+    echo "  1) create the DB/user:  sudo mariadb < $PREFIX/sql/setup.sql"
+    echo "  2) edit /etc/nightwatcher/nightwatcher.conf for your site"
+    echo "  3) put NW_DB_PASSWORD=... in /etc/nightwatcher/nightwatcher.env (chmod 0600)"
+    echo "  4) start it:            sudo systemctl start nightwatcherd"
+    ;;
+esac
+exit 0

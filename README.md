@@ -14,9 +14,9 @@ Tools to interface with Unihedron **Sky Quality Meters (SQMs)** in furtherance o
 participating in the **[Dark Sky Network (DSN)](https://soazcomms.github.io/docs/DSN_Description.html)**,
 operated by the Southern Arizona Dark Sky Association.
 
-SQMs record sky brightness (magnitudes per square arc-second) every 5 minutes.
+SQMs measure sky brightness (magnitude per square arc-second).
 NightWatcher2 reads them, stores the readings in a time-series database, and exposes
-that data through an API and a web UI.
+that data through an API and a web UI. It can also automatically upload data to the
 
 ## Components
 
@@ -193,6 +193,23 @@ symlinks the unit into `/etc/systemd/system/`, and seeds `/etc/nightwatcher/nigh
 To finish: `sudo systemctl daemon-reload && sudo systemctl enable --now nightwatcherd`.
 To remove everything: `sudo /usr/local/nightwatcher/uninstall.sh` (or `sudo make -C build uninstall`) —
 this leaves `/etc/nightwatcher` (your config + secrets) and the database in place.
+
+### Debian package (`.deb`)
+
+CI builds installable `.deb`s for **amd64** and **arm64** (Raspberry Pi) on every push — download
+them from the run's *Artifacts*. To build one yourself:
+
+```sh
+cmake -B pkg -DNW_INSTALL_SYSTEM_LINKS=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build pkg --parallel
+( cd pkg && cpack -G DEB )                 # -> pkg/nightwatcher_<ver>_<arch>.deb
+sudo apt install ./pkg/nightwatcher_*.deb  # resolves libmariadb3/libssl3, runs the postinst
+```
+
+The package installs the bundle under `/usr/local/nightwatcher`; its **postinst** creates the
+PATH/systemd/udev symlinks, seeds `/etc/nightwatcher/nightwatcher.conf`, installs the udev rule for
+USB SQM-LU access, adds the installing user to `dialout`, and enables the service. `apt remove`
+reverses it; `apt purge` also drops `/etc/nightwatcher`.
 
 ## Configuration
 

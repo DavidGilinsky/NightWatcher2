@@ -10,7 +10,11 @@
 # Build directories
 /build/
 /build-*/
+/pkg/
 /out/
+
+# Package artifacts
+*.deb
 
 # CMake artifacts
 CMakeCache.txt

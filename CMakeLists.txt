@@ -166,6 +166,7 @@ install(DIRECTORY web/ DESTINATION web)
 install(FILES sql/schema.sql sql/setup.sql DESTINATION sql)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nightwatcher.conf.example DESTINATION share)
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/nightwatcherd.service DESTINATION lib/systemd/system)
+install(FILES config/udev/99-nightwatcher-sqm.rules DESTINATION lib/udev/rules.d)
 
 # Bundled uninstaller + a `make uninstall` convenience target.
 configure_file(cmake/uninstall.sh.in ${CMAKE_CURRENT_BINARY_DIR}/uninstall.sh @ONLY)
@@ -173,11 +174,46 @@ install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/uninstall.sh DESTINATION .)
 add_custom_target(uninstall COMMAND ${CMAKE_CURRENT_BINARY_DIR}/uninstall.sh)
 
 # Reach outside the prefix: CLI symlinks on PATH, systemd unit link, /etc config.
+# The .deb does this in its postinst instead (built with NW_INSTALL_SYSTEM_LINKS=OFF).
 if(NW_INSTALL_SYSTEM_LINKS)
     configure_file(cmake/nw_install_links.cmake.in
                    ${CMAKE_CURRENT_BINARY_DIR}/nw_install_links.cmake @ONLY)
     install(SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/nw_install_links.cmake)
 endif()
+
+# ---- Packaging (CPack: Debian .deb) ----
+# Build one with:
+#   cmake -B pkg -DNW_INSTALL_SYSTEM_LINKS=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+#   cmake --build pkg --parallel && ( cd pkg && cpack -G DEB )
+# The payload is just the bundle under the prefix; the package's postinst creates
+# the PATH/systemd/udev symlinks, seeds /etc config, and enables the service.
+set(CPACK_PACKAGE_NAME "nightwatcher")
+set(CPACK_PACKAGE_VENDOR "SAZ Dark Sky Association")
+set(CPACK_PACKAGE_CONTACT "David Gilinsky <gilinsky@gilinskyresearch.com>")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+set(CPACK_PACKAGE_HOMEPAGE_URL "${PROJECT_HOMEPAGE_URL}")
+set(CPACK_PACKAGING_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}")
+set(CPACK_STRIP_FILES ON)
+
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
+set(CPACK_DEBIAN_PACKAGE_SECTION "science")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)             # auto Depends from the ELF binaries
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "adduser")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mariadb-server | mysql-server")
+set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)  # 0755 maintainer scripts
+set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")          # nightwatcher_<ver>_<arch>.deb
+
+configure_file(debian/postinst.in ${CMAKE_CURRENT_BINARY_DIR}/debian/postinst @ONLY)
+configure_file(debian/prerm.in    ${CMAKE_CURRENT_BINARY_DIR}/debian/prerm    @ONLY)
+configure_file(debian/postrm.in   ${CMAKE_CURRENT_BINARY_DIR}/debian/postrm   @ONLY)
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+    "${CMAKE_CURRENT_BINARY_DIR}/debian/postinst"
+    "${CMAKE_CURRENT_BINARY_DIR}/debian/prerm"
+    "${CMAKE_CURRENT_BINARY_DIR}/debian/postrm")
+
+include(CPack)
 
 # ---- Tests ----
 if(NW_BUILD_TESTS)
