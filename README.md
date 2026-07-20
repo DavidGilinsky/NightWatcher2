@@ -138,7 +138,7 @@ then enable database population:
 
 ```sh
 nwdb add-sensor DSN003 --tcp 172.22.4.112:10001 \
-     --name Sugarloaf --site "Sugarloaf Peak" \
+     --name "CrestaLoma Observatory" --site "CrestaLoma Observatory" \
      --lat 31.9500 --lon -111.6000 --elev 1200 \
      --timezone America/Phoenix --installed 2026-07-18
 nwdb add-sensor DSN006 --serial /dev/ttyUSB0 --name "USB unit"   # SQM-LU over USB
@@ -182,7 +182,7 @@ curl -s "localhost:8080/api/v1/discover?cidr=172.22.4.0/24"
 
 AUTH="Authorization: Bearer $NW_API_TOKEN"
 curl -s -X POST  localhost:8080/api/v1/sensors -H "$AUTH" \
-  -d '{"id":"DSN003","tcp":"172.22.4.112:10001","name":"Sugarloaf","lat":31.9500,"lon":-111.6000,"elev":1200}'
+  -d '{"id":"DSN003","tcp":"172.22.4.112:10001","name":"CrestaLoma Observatory","lat":31.9500,"lon":-111.6000,"elev":1200}'
 curl -s -X PATCH localhost:8080/api/v1/sensors/DSN003 -H "$AUTH" -d '{"elevation_m":1205}'
 curl -s -X POST  localhost:8080/api/v1/sensors/DSN003/poll -H "$AUTH"
 curl -s -X POST  localhost:8080/api/v1/db/init -H "$AUTH"     # create any missing tables

@@ -44,7 +44,7 @@ int main() {
             << "[sensor:DSN003]\n"
             << "transport = tcp\n"
             << "address = 192.168.1.50:10001\n"
-            << "name = Sugarloaf\n"
+            << "name = CrestaLoma Observatory\n"
             << "\n"
             << "[sensor:DSN004]\n"
             << "transport = serial\n"
@@ -68,7 +68,7 @@ int main() {
         CHECK(cfg.sensors[0].id == "DSN003");
         CHECK(cfg.sensors[0].transport == "tcp");
         CHECK(cfg.sensors[0].address == "192.168.1.50:10001");
-        CHECK(cfg.sensors[0].name == "Sugarloaf");
+        CHECK(cfg.sensors[0].name == "CrestaLoma Observatory");
         CHECK(cfg.sensors[1].id == "DSN004");
         CHECK(cfg.sensors[1].transport == "serial");
         CHECK(cfg.sensors[1].address == "/dev/ttyUSB0");
