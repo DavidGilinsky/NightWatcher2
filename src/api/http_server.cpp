@@ -1054,7 +1054,7 @@ void HttpServer::start() {
                     send(res, 200, to_json(*t));
                 } catch (const std::exception& e) { send_err(res, 500, e.what()); }
             });
-    srv.Post("/api/v1/export-targets", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+    srv.Post("/api/v1/export-targets", [dbc, token, on_reload](const httplib::Request& req, httplib::Response& res) {
         if (!require_auth(req, res, token, dbc, true)) return;
         json body;
         try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
@@ -1067,12 +1067,13 @@ void HttpServer::start() {
             if (!f.target) { send_err(res, 400, "missing 'target'"); return; }
             if (body.contains("config") && body["config"].is_object()) f.config = body["config"].dump();
             db.upsert_export_target(id, f);
+            if (on_reload) on_reload();  // (de)schedule the target at once, like sensor changes
             const auto t = db.find_export_target(id);
             send(res, 201, t ? to_json(*t) : json{{"id", id}});
         } catch (const std::exception& e) { send_err(res, 500, e.what()); }
     });
     srv.Patch(R"(/api/v1/export-targets/([^/]+))",
-              [dbc, token](const httplib::Request& req, httplib::Response& res) {
+              [dbc, token, on_reload](const httplib::Request& req, httplib::Response& res) {
                   if (!require_auth(req, res, token, dbc, true)) return;
                   json body;
                   try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
@@ -1088,16 +1089,18 @@ void HttpServer::start() {
                           send_err(res, 404, "no such export target");
                           return;
                       }
+                      if (on_reload) on_reload();  // apply schedule/config/status change at once
                       const auto t = db.find_export_target(req.matches[1]);
                       send(res, 200, t ? to_json(*t) : json::object());
                   } catch (const std::exception& e) { send_err(res, 500, e.what()); }
               });
     srv.Delete(R"(/api/v1/export-targets/([^/]+))",
-               [dbc, token](const httplib::Request& req, httplib::Response& res) {
+               [dbc, token, on_reload](const httplib::Request& req, httplib::Response& res) {
                    if (!require_auth(req, res, token, dbc, true)) return;
                    try {
                        db::Database db(dbc);
                        db.remove_export_target(req.matches[1]);
+                       if (on_reload) on_reload();  // stop the worker for a now-deleted target
                        send(res, 200, json{{"deleted", std::string(req.matches[1])}});
                    } catch (const std::exception& e) { send_err(res, 500, e.what()); }
                });
