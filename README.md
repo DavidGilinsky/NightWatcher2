@@ -19,6 +19,8 @@ NightWatcher2 reads them, stores the readings in a time-series database, and exp
 that data through an API and a web UI. It can also automatically export data on a schedule —
 uploading to the DSN shared storage, and/or pushing to a companion WordPress site for public display.
 
+![The web UI's Query & graph view: SQM sky brightness (mag/arcsec²) with Sun/Moon altitude, a moon-phase glyph, and ambient-temperature overlays over the built-in dark theme](docs/screenshots/query-graph.png)
+
 ## Components
 
 | Component | Description | Status |
@@ -279,8 +281,11 @@ put the database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASS
 ## Data export
 
 Export **targets** live in the database (`export_targets`) and are run by the daemon on a schedule
-(nightly at a local time, or a fixed interval), each tracking a watermark so it only sends new
-readings; every run is recorded in `export_log`. Two target types ship today:
+(**nightly, weekly, or monthly** at a local time — the monthly one can target the **last day of the
+month** for a contiguous file — or a fixed **interval**), each tracking a watermark so it only sends
+new readings; every run is recorded in `export_log`. Two target types ship today:
+
+![The web UI's DSN Export tab: scheduled export targets showing per-target schedule (including "monthly last day") and the last-export time in the site's local zone](docs/screenshots/dsn-export.png)
 
 - **`dsn`** — builds the DSN *Community Standard Skyglow* `.dat` file for the month and uploads it
   to **Google Drive** (OAuth; authorize once with `nwexport-auth`). Configured from the web UI's
