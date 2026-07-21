@@ -139,4 +139,49 @@ time_t next_local_hhmm_utc(int hour, int minute, const std::string& tz, time_t n
     return cand;
 }
 
+time_t next_local_weekly_utc(int wday, int hour, int minute, const std::string& tz, time_t now) {
+    if (wday < 0) wday = 0;
+    if (wday > 6) wday = 6;
+    std::tm target = local_tm(now, tz);
+    const int delta = (wday - target.tm_wday + 7) % 7;  // days until the target weekday
+    target.tm_mday += delta;
+    target.tm_hour = hour;
+    target.tm_min = minute;
+    target.tm_sec = 0;
+    time_t cand = tz_mktime(target, tz);
+    if (cand <= now) {
+        target.tm_mday += 7;  // next week (mktime normalizes)
+        cand = tz_mktime(target, tz);
+    }
+    return cand;
+}
+
+time_t next_local_monthly_utc(int mday, int hour, int minute, const std::string& tz, time_t now) {
+    const bool last_day = (mday <= 0);  // sentinel: run on the last day of the month
+    if (!last_day && mday > 28) mday = 28;  // clamp fixed days to one that exists every month
+    const std::tm base = local_tm(now, tz);
+
+    std::tm target = base;
+    if (last_day) {
+        target.tm_mon += 1;  // day 0 of next month == last day of this month (mktime normalizes)
+        target.tm_mday = 0;
+    } else {
+        target.tm_mday = mday;
+    }
+    target.tm_hour = hour;
+    target.tm_min = minute;
+    target.tm_sec = 0;
+    time_t cand = tz_mktime(target, tz);
+    if (cand <= now) {
+        std::tm nxt = base;
+        if (last_day) { nxt.tm_mon += 2; nxt.tm_mday = 0; }  // last day of next month
+        else { nxt.tm_mon += 1; nxt.tm_mday = mday; }
+        nxt.tm_hour = hour;
+        nxt.tm_min = minute;
+        nxt.tm_sec = 0;
+        cand = tz_mktime(nxt, tz);
+    }
+    return cand;
+}
+
 }  // namespace nightwatcher::exporter::timeutil
