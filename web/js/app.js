@@ -5,7 +5,7 @@
 //                CRUD, readings query + graph, events, users, and database
 //                maintenance, all against the /api/v1 API.
 // Created:       2026-07-18
-// Last Modified: 2026-07-19
+// Last Modified: 2026-07-21
 // Version:       0.1.0
 // License:       GPL-3.0-or-later
 // ---------------------------------------------------------------------------
@@ -702,9 +702,14 @@ async function viewWeather() {
   return frag;
 }
 
+// Auto-refresh ("Live") timer for the Query view. Module-level so a freshly
+// mounted view can clear any timer left running by a prior instance.
+let queryLiveTimer = null;
+
 async function viewQuery() {
   const frag = document.createDocumentFragment();
   frag.append(el('h2', {}, 'Query & graph'));
+  if (queryLiveTimer) { clearInterval(queryLiveTimer); queryLiveTimer = null; }
   const sensors = await api('GET', '/sensors');
   let stations = [];
   try { stations = await api('GET', '/weather-stations'); } catch (_) { /* weather is optional */ }
@@ -774,6 +779,22 @@ async function viewQuery() {
   const overlayWrap = el('span', { class: 'row', style: 'gap:.5rem' },
     el('span', { class: 'muted' }, 'Overlay'), overlayChk('sun', 'Sun'), overlayChk('moon', 'Moon'), ambientChkLabel);
 
+  // Live auto-refresh: poll the newest reading every LIVE_MS and, when it advances,
+  // re-run load() (a rolling now-relative window) so the graph tracks new data with
+  // no manual reload. Off by default; only meaningful for the rolling ranges.
+  const LIVE_MS = 45000;
+  let livePref = localStorage.getItem('nw_live') === '1';
+  let liveMaxTs = null;  // newest ts_utc currently plotted (set by load, checked by the poll)
+  const liveDot = el('span', { style: 'width:.55rem;height:.55rem;border-radius:50%;background:#3fb950;display:none' });
+  const liveStat = el('span', { class: 'muted', style: 'font-size:.85em' });
+  const liveChk = el('input', {
+    type: 'checkbox', ...(livePref ? { checked: 'checked' } : {}),
+    onchange: (e) => { livePref = e.target.checked; localStorage.setItem('nw_live', livePref ? '1' : '0'); startLive(); },
+  });
+  const liveWrap = el('span', { class: 'row', style: 'gap:.4rem' },
+    el('label', { style: 'display:inline-flex;align-items:center;gap:.3rem', title: 'Auto-refresh when new data arrives' }, liveChk, 'Live'),
+    liveDot, liveStat);
+
   const toUtc = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
   const rangeParams = () => {
     let from = '', to = '';
@@ -800,6 +821,7 @@ async function viewQuery() {
     try {
       lastSensorGraph = null;
       const rs = await api('GET', `${path}?${p}`);
+      liveMaxTs = rs.reduce((m, r) => (r.ts_utc > m ? r.ts_utc : m), '');  // newest plotted, for the Live poll
       caption.textContent = `${rs.length} reading(s)` + (from ? `  ·  from ${from} UTC` : '') + (to ? `  to ${to} UTC` : '');
       if (!rs.length) { chart.innerHTML = ''; chart.append(el('p', { class: 'muted' }, 'No readings in this range.')); tblWrap.innerHTML = ''; return; }
       let cols;
@@ -840,6 +862,46 @@ async function viewQuery() {
     } catch (e) { chart.innerHTML = ''; chart.append(msg('err', e.message)); }
   };
 
+  // ---- Live auto-refresh controls ----
+  const pad2 = (n) => String(n).padStart(2, '0');
+  const markLive = () => {
+    const d = new Date();
+    liveStat.textContent = `live · ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+  };
+  const newestTs = async () => {
+    const idx = sel.value.indexOf(':');
+    const kind = sel.value.slice(0, idx), id = sel.value.slice(idx + 1);
+    const path = kind === 'weather'
+      ? `/weather-stations/${encodeURIComponent(id)}/readings`
+      : `/sensors/${encodeURIComponent(id)}/readings`;
+    const r = await api('GET', `${path}?limit=1`);
+    return r && r.length ? r[0].ts_utc : null;
+  };
+  const stopLive = () => {
+    if (queryLiveTimer) { clearInterval(queryLiveTimer); queryLiveTimer = null; }
+    liveDot.style.display = 'none'; liveStat.textContent = '';
+  };
+  const liveTick = async () => {
+    if (!chart.isConnected) { stopLive(); return; }        // view was navigated away
+    if (document.hidden || rangeSel.value === 'custom') return;
+    try {
+      const ts = await newestTs();
+      if (ts && ts > (liveMaxTs || '')) { await load(); markLive(); }  // redraw only when data advanced
+    } catch (_) { /* daemon busy/restarting — keep the last graph, retry next tick */ }
+  };
+  const startLive = () => {
+    stopLive();
+    if (!livePref || rangeSel.value === 'custom') return;
+    liveDot.style.display = ''; liveStat.textContent = 'live';
+    queryLiveTimer = setInterval(liveTick, LIVE_MS);
+  };
+  const updateLiveAvail = () => {
+    const custom = rangeSel.value === 'custom';
+    liveChk.disabled = custom;
+    liveWrap.style.opacity = custom ? '.5' : '';
+    liveWrap.title = custom ? 'Live applies to the rolling ranges only' : '';
+  };
+
   // Download a DSN community-format .dat for the selected sensor + range.
   const downloadDsn = () => {
     const idx = sel.value.indexOf(':');
@@ -861,7 +923,9 @@ async function viewQuery() {
 
   rangeSel.addEventListener('change', () => {
     customWrap.style.display = rangeSel.value === 'custom' ? '' : 'none';
+    updateLiveAvail();
     if (rangeSel.value !== 'custom') load();
+    startLive();  // custom => stops the poll; a rolling range => (re)starts it when Live is on
   });
   sel.addEventListener('change', () => { updateDsnBtn(); load(); });
 
@@ -869,12 +933,14 @@ async function viewQuery() {
     el('span', { class: 'muted' }, 'Source'), sel,
     el('span', { class: 'muted' }, 'Range'), rangeSel,
     customWrap,
+    liveWrap,
     overlayWrap,
     el('button', { class: 'btn', onclick: load }, 'Load'),
     dsnBtn));
   updateDsnBtn();
+  updateLiveAvail();
   frag.append(caption, chart, tblWrap);
-  setTimeout(load, 0);
+  setTimeout(() => { load().then(startLive); }, 0);
   return frag;
 }
 
