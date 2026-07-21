@@ -27,12 +27,14 @@ namespace {
 constexpr int kMaxRows = 200000;  // safety cap per query (~2 years at 5-min cadence)
 
 // Weather station co-located with `sensor` (shared site, else the sole active
-// station), and its readings across the reading window — for the webhook's
-// ambient-temperature overlay. Empty when there is no clear co-located station.
-std::vector<db::WeatherReadingRow> collect_ambient(db::Database& db,
-                                                   const db::SensorRow& sensor,
-                                                   const std::vector<db::ReadingRow>& readings) {
-    if (readings.empty()) return {};
+// station), and its readings across the export window [from, to] — for the
+// webhook's ambient overlay. NOTE: `from`/`to` must be the incremental push window
+// (watermark -> now), NOT the span of the SQM readings: at steady state a push
+// carries a single reading whose instant almost never coincides with a weather
+// timestamp, so a readings-span window would silently drop all ambient. Empty when
+// there is no clear co-located station.
+std::vector<db::WeatherReadingRow> collect_ambient(db::Database& db, const db::SensorRow& sensor,
+                                                   const std::string& from, const std::string& to) {
     std::string station_id;
     if (!sensor.site.empty()) {
         for (const auto& w : db.weather_stations())
@@ -43,8 +45,7 @@ std::vector<db::WeatherReadingRow> collect_ambient(db::Database& db,
         if (active.size() == 1) station_id = active.front().id;
     }
     if (station_id.empty()) return {};
-    return db.weather_readings_between(station_id, readings.front().ts_utc,
-                                       readings.back().ts_utc, kMaxRows);
+    return db.weather_readings_between(station_id, from, to, kMaxRows);
 }
 }
 
@@ -92,7 +93,7 @@ ExportRunResult run_export(db::Database& db, const db::ExportTargetRow& t) {
         ExportContext ctx;
         ctx.sensor = *sensor;
         ctx.readings = std::move(fresh);
-        ctx.weather = collect_ambient(db, *sensor, ctx.readings);
+        ctx.weather = collect_ambient(db, *sensor, t.last_export_ts, now);  // full push window
         ctx.from_ts = t.last_export_ts;  // may be empty on the first run
         ctx.to_ts = now;
 
