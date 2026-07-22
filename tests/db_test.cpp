@@ -275,9 +275,9 @@ int main() {
         dbh.delete_setting("nwtest_setting");
         CHECK(!dbh.get_setting("nwtest_setting").has_value());
 
-        // Schema status reports the eleven known tables, sensors present.
+        // Schema status reports the twelve known tables, sensors present.
         const auto st = dbh.schema_status();
-        CHECK(st.size() == 11);
+        CHECK(st.size() == 12);
         bool sensors_present = false;
         for (const auto& tc : st) {
             if (tc.table == "sensors") sensors_present = tc.present;
