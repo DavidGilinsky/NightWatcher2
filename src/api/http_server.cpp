@@ -268,6 +268,28 @@ json to_json(const db::ExportLogRow& l) {
                 {"detail", l.detail}};
 }
 
+// An extension is "active" (its tab is shown) while its heartbeat is fresh.
+constexpr long long kExtensionActiveMaxAgeS = 180;
+
+json to_json(const db::ExtensionRow& e) {
+    const bool active = (e.status == "active" && e.heartbeat_age_s >= 0 &&
+                         e.heartbeat_age_s <= kExtensionActiveMaxAgeS);
+    return json{{"name", e.name}, {"label", e.label}, {"version", e.version},
+                {"data_table", e.data_table}, {"host", e.host}, {"pid", j_opt(e.pid)},
+                {"status", e.status}, {"last_heartbeat", e.last_heartbeat},
+                {"started_at", e.started_at}, {"heartbeat_age_s", e.heartbeat_age_s},
+                {"active", active}};
+}
+
+// A safe SQL identifier (table/column name): letter/underscore then word chars.
+bool valid_identifier(const std::string& s) {
+    if (s.empty() || s.size() > 64) return false;
+    if (!(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_')) return false;
+    for (char c : s)
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_')) return false;
+    return true;
+}
+
 // ---- request-body parsing --------------------------------------------------
 db::SensorFields sensor_fields_from_json(const json& b) {
     db::SensorFields f;
@@ -615,6 +637,41 @@ void HttpServer::start() {
             send(res, 200, arr);
         } catch (const std::exception& e) { send_err(res, 500, e.what()); }
     });
+    // Optional-tool extensions: list registered ones (with a computed `active`
+    // flag from heartbeat freshness), and serve an extension's data table
+    // generically so the web UI can render a tab without core knowing its shape.
+    srv.Get("/api/v1/extensions", [dbc](const httplib::Request&, httplib::Response& res) {
+        try {
+            db::Database db(dbc);
+            json arr = json::array();
+            for (const auto& e : db.extensions()) arr.push_back(to_json(e));
+            send(res, 200, arr);
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+    });
+    srv.Get(R"(/api/v1/extensions/([^/]+)/data)",
+            [dbc](const httplib::Request& req, httplib::Response& res) {
+                try {
+                    db::Database db(dbc);
+                    const auto ext = db.find_extension(req.matches[1]);
+                    if (!ext) { send_err(res, 404, "no such extension"); return; }
+                    if (ext->data_table.empty() || !valid_identifier(ext->data_table)) {
+                        send_err(res, 400, "extension has no valid data table"); return;
+                    }
+                    int limit = 200;
+                    if (req.has_param("limit"))
+                        limit = std::atoi(req.get_param_value("limit").c_str());
+                    const auto data = db.query_recent(ext->data_table, limit);
+                    json rows = json::array();
+                    for (const auto& r : data.rows) {
+                        json obj = json::object();
+                        for (size_t i = 0; i < data.columns.size() && i < r.size(); ++i)
+                            obj[data.columns[i]] = r[i] ? json(*r[i]) : json(nullptr);
+                        rows.push_back(std::move(obj));
+                    }
+                    send(res, 200, json{{"extension", ext->name}, {"label", ext->label},
+                                        {"columns", data.columns}, {"rows", rows}});
+                } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+            });
     srv.Get("/api/v1/weather-stations", [dbc](const httplib::Request&, httplib::Response& res) {
         try {
             db::Database db(dbc);
