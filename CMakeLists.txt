@@ -200,18 +200,25 @@ set(CPACK_DEBIAN_PACKAGE_MAINTAINER "${CPACK_PACKAGE_CONTACT}")
 set(CPACK_DEBIAN_PACKAGE_SECTION "science")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)             # auto Depends from the ELF binaries
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "adduser")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "adduser, debconf (>= 0.5) | debconf-2.0")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "mariadb-server | mysql-server")
 set(CPACK_DEBIAN_PACKAGE_CONTROL_STRICT_PERMISSION ON)  # 0755 maintainer scripts
 set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")          # nightwatcher_<ver>_<arch>.deb
 
+# Interactive install-time configuration is debconf-driven: `config` asks the
+# questions in `templates`, and `postinst` applies the answers (DB connection +
+# password, API bind/port/TLS, optional DB creation). postinst/prerm/postrm are
+# generated from their .in templates for @CMAKE_INSTALL_PREFIX@ substitution;
+# config/templates are static and shipped from the source tree.
 configure_file(debian/postinst.in ${CMAKE_CURRENT_BINARY_DIR}/debian/postinst @ONLY)
 configure_file(debian/prerm.in    ${CMAKE_CURRENT_BINARY_DIR}/debian/prerm    @ONLY)
 configure_file(debian/postrm.in   ${CMAKE_CURRENT_BINARY_DIR}/debian/postrm   @ONLY)
 set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
     "${CMAKE_CURRENT_BINARY_DIR}/debian/postinst"
     "${CMAKE_CURRENT_BINARY_DIR}/debian/prerm"
-    "${CMAKE_CURRENT_BINARY_DIR}/debian/postrm")
+    "${CMAKE_CURRENT_BINARY_DIR}/debian/postrm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/debian/config"
+    "${CMAKE_CURRENT_SOURCE_DIR}/debian/templates")
 
 include(CPack)
 

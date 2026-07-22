@@ -229,10 +229,21 @@ cmake --build pkg --parallel
 sudo apt install ./pkg/nightwatcher_*.deb  # resolves libmariadb3/libssl3, runs the postinst
 ```
 
-The package installs the bundle under `/usr/local/nightwatcher`; its **postinst** creates the
-PATH/systemd/udev symlinks, seeds `/etc/nightwatcher/nightwatcher.conf`, installs the udev rule for
-USB SQM-LU access, adds the installing user to `dialout`, and enables the service. `apt remove`
-reverses it; `apt purge` also drops `/etc/nightwatcher`.
+The install is **debconf-driven**: it prompts for the database password, host, the web-UI/API bind
+address, port, and HTTPS, whether to create the `nightwatcher` database + user now (via the local
+MariaDB/MySQL root socket — the daemon builds the tables and seeds an admin login on first start),
+and whether to start the service. Re-run those prompts any time with:
+
+```sh
+sudo dpkg-reconfigure nightwatcher
+```
+
+The package installs the bundle under `/usr/local/nightwatcher`; its **postinst** applies those
+answers to `/etc/nightwatcher/nightwatcher.conf` and writes the password to
+`/etc/nightwatcher/nightwatcher.env` (mode `0600`), then creates the PATH/systemd/udev symlinks,
+seeds the config, installs the udev rule for USB SQM-LU access, adds the installing user to
+`dialout`, and enables (and optionally starts) the service. `apt remove` reverses it; `apt purge`
+also drops `/etc/nightwatcher` and the saved answers.
 
 ## Configuration
 
