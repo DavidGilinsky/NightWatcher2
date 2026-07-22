@@ -1368,7 +1368,11 @@ async function viewExtension(name, label) {
   const frag = document.createDocumentFragment();
   frag.append(el('h2', {}, label || name));
   const stat = el('span', { class: 'muted' });
-  const live = el('input', { type: 'checkbox' });
+  // Live auto-refresh preference persists per extension until manually cleared,
+  // so leaving the tab (or refreshing the page) keeps it set.
+  const liveKey = 'nw_ext_live_' + name;
+  const livePref = localStorage.getItem(liveKey) === '1';
+  const live = el('input', { type: 'checkbox', ...(livePref ? { checked: 'checked' } : {}) });
   const box = el('div', { class: 'scroll' });
   const load = async () => {
     try {
@@ -1380,12 +1384,16 @@ async function viewExtension(name, label) {
       stat.textContent = (d.rows ? d.rows.length : 0) + ' rows';
     } catch (e) { box.innerHTML = ''; box.append(msg('err', e.message)); }
   };
-  live.addEventListener('change', () => {
+  const startLive = () => {          // (re)start the poll iff the box is checked
     stopExtLive();
     if (live.checked) extLiveTimer = setInterval(() => {
       if (!box.isConnected) { stopExtLive(); return; }
       if (!document.hidden) load();
     }, 5000);
+  };
+  live.addEventListener('change', () => {
+    localStorage.setItem(liveKey, live.checked ? '1' : '0');
+    startLive();
   });
   frag.append(el('div', { style: 'display:flex;gap:.7rem;align-items:center;margin:.2rem 0 .7rem' },
     el('button', { class: 'btn ghost sm', onclick: load }, 'Refresh'),
@@ -1393,6 +1401,7 @@ async function viewExtension(name, label) {
     stat));
   frag.append(box);
   await load();
+  startLive();                       // restore Live polling if it was left on
   return frag;
 }
 
