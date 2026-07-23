@@ -16,8 +16,16 @@ operated by the Southern Arizona Dark Sky Association.
 
 SQMs measure sky brightness (magnitude per square arc-second).
 NightWatcher2 reads them, stores the readings in a time-series database, and exposes
-that data through an API and a web UI. It can also automatically export data on a schedule —
-uploading to the DSN shared storage, and/or pushing to a companion WordPress site for public display.
+that data through an API and a web UI. It also polls co-located **weather stations**, and
+automatically **exports** data on a schedule — uploading to the DSN shared storage, and/or
+pushing to a companion WordPress site for public display.
+
+It also doubles as a small hub for a dark-sky observing site. A generic **extension
+registry** lets companion tools plug into the same web UI while they run, without adding
+anything non-SQM to the core — the first being
+**[nightwatcher-ingest](https://github.com/DavidGilinsky/nightwatcher-ingest)**, a FITS
+ingest pipeline that files raw astrophotography frames and can stamp each with the
+sky-brightness reading nearest the moment it was captured.
 
 ![The web UI's Query & graph view: SQM sky brightness (mag/arcsec²) with Sun/Moon altitude, a moon-phase glyph, and ambient-temperature overlays over the built-in dark theme](docs/screenshots/query-graph.png)
 
@@ -27,16 +35,17 @@ uploading to the DSN shared storage, and/or pushing to a companion WordPress sit
 |-----------|-------------|--------|
 | SQM device library | Talk to **SQM-LE** (Ethernet/TCP) and **SQM-LU** (USB serial); parse the Unihedron protocol; network + USB discovery; calibration control | Done |
 | `sqmctl` | CLI to discover and query a single SQM over TCP or serial | Done |
-| Database | MariaDB (`libmariadb`) store — readings, sensors, calibration/config history, weather, exports, auth, settings (11 tables) | Done |
+| Database | MariaDB (`libmariadb`) store — readings, sensors, calibration/config history, weather, exports, auth, settings, extensions (12 tables) | Done |
 | `nwdb` | CLI to register sensors, poll an SQM into the DB, and query readings | Done |
 | `nightwatcherd` | Daemon: polls active sensors + weather stations on their intervals, records readings, runs scheduled exports, serves the API/UI | Done |
 | REST API | Embedded HTTP/JSON: auth, sensor/weather CRUD, readings/query, live poll/test/discover, calibration, exports, server settings; optional HTTPS | Done |
-| Web UI | Login, dashboard, sensor/weather management, query + time-series graph (Sun/Moon/phase + ambient overlays), sensor test + calibration, DSN export, users, DB + server settings | Done |
+| Web UI | Login, dashboard, sensor/weather management, query + time-series graph (Sun/Moon/phase + ambient overlays), sensor test + calibration, DSN export, users, DB + server settings, plus dynamic tabs for registered companion tools | Done |
 | Weather | Modular pull providers (Ambient Weather, Weather Underground) normalized to SI | Done |
 | Data export | Modular scheduled exporters — DSN community `.dat` → Google Drive, or **webhook push** to an HTTP endpoint | Done |
 | WordPress connector | Companion plugin (`nightwatcher-wp`) receives the webhook push; serves a read-only, public date-range graph | Done |
+| Extension registry | Companion tools register + get a dynamic web-UI tab while running; first is [nightwatcher-ingest](https://github.com/DavidGilinsky/nightwatcher-ingest) (FITS ingest + SQM stamping) | Done |
 | Security | Admin login (PBKDF2), off-localhost read-auth, optional self-signed HTTPS/TLS | Done |
-| Packaging | `.deb` for amd64 + arm64 (Raspberry Pi); systemd unit; udev rule for USB access | Done |
+| Packaging | debconf-driven `.deb` (amd64 + arm64 / Raspberry Pi) — prompts for DB/API setup; systemd unit; udev rule for USB access | Done |
 
 ## Building
 
@@ -111,11 +120,12 @@ exercised end-to-end without a physical meter:
 
 Readings and configuration are stored in MariaDB via MariaDB Connector/C (`libmariadb`).
 
-The schema ([sql/schema.sql](sql/schema.sql)) has 11 tables: `sensors`, `readings` (with a
+The schema ([sql/schema.sql](sql/schema.sql)) has 12 tables: `sensors`, `readings` (with a
 `quality` flag for saturated/suspect data), `config_log` (calibration/config history), an
 operational `events` log, `weather_stations` / `weather_readings` (a co-located weather station
 such as an Ambient Weather WS-2000, polled by the daemon), `users` / `sessions` (API/UI auth),
-`export_targets` / `export_log` (scheduled DSN uploads), and `settings` (runtime server config).
+`export_targets` / `export_log` (scheduled DSN uploads), `settings` (runtime server config), and
+`extensions` (the companion-tool registry).
 Stored units are metric/SI.
 
 ### One-time setup
@@ -289,6 +299,24 @@ put the database password in `/etc/nightwatcher/nightwatcher.env` as `NW_DB_PASS
 `0600`). The unit runs as a `DynamicUser` in the `dialout` group so it can reach a USB SQM-LU on
 `/dev/ttyUSB*`.
 
+## Extensions & companion tools
+
+NightWatcher stays a focused SQM tool at its core, but it can host **companion tools** without
+absorbing their code. A generic **extension registry** (an `extensions` table plus
+`/api/v1/extensions`) lets a separate tool register itself and heartbeat while it runs; the web
+UI then shows a **dynamic tab** for it, and drops the tab when the tool stops. A plain SQM
+deployment never sees any of it — the core ships no astrophotography or tool-specific code.
+
+- **[nightwatcher-ingest](https://github.com/DavidGilinsky/nightwatcher-ingest)** — a
+  config-driven FITS-frame ingest pipeline: it watches an incoming directory, classifies each
+  raw astrophotography frame from its header, renames it to a standard, and files it into an
+  archive tree. Pointed at NightWatcher, it **stamps each frame with the sky-brightness reading
+  nearest the moment it was taken** and registers an **Ingest** tab that shows its transfer
+  history live.
+
+The WordPress connector below is a second companion, tied in through the export system rather
+than the extension registry.
+
 ## Data export
 
 Export **targets** live in the database (`export_targets`) and are run by the daemon on a schedule
@@ -348,7 +376,7 @@ web/          static web UI (index.html, css, js, vendored uPlot)
 sql/          database schema + one-time setup
 config/       example config, systemd unit, udev rule (templated .in files)
 cmake/        ARM toolchain + install/uninstall helpers
-debian/       .deb maintainer scripts (postinst/prerm/postrm)
+debian/       .deb maintainer scripts (postinst/prerm/postrm) + debconf config/templates
 docs/         architecture, SQM protocol, DSN notes
 tests/        unit + integration tests
 ```
