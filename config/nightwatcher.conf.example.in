@@ -39,8 +39,12 @@ bind = 127.0.0.1
 # your own certificate instead. bind/port/tls are also editable from the web
 # UI's Server tab, which overrides these values.
 tls = off
-# tls_cert = /etc/nightwatcher/tls/nightwatcher-cert.pem
-# tls_key  = /etc/nightwatcher/tls/nightwatcher-key.pem
+# TLS material lives in the systemd StateDirectory (/var/lib/nightwatcher), which
+# stays writable under the service's ProtectSystem=strict sandbox; the self-signed
+# cert is generated here on first start. Point these at your own certificate to
+# use it instead. (For a non-systemd/dev run, set these to a writable path.)
+tls_cert = /var/lib/nightwatcher/nightwatcher-cert.pem
+tls_key = /var/lib/nightwatcher/nightwatcher-key.pem
 # Path to schema.sql, used by POST /api/v1/db/init to create any missing tables.
 schema_file = @CMAKE_INSTALL_PREFIX@/sql/schema.sql
 # Static web UI directory, served at /.
