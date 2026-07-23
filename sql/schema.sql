@@ -233,6 +233,23 @@ CREATE TABLE IF NOT EXISTS settings (
     PRIMARY KEY (name)
 ) ENGINE=InnoDB;
 
+-- Optional-tool registry. A companion tool (e.g. nightwatcher-ingest) registers
+-- itself here and heartbeats while running; the web UI shows a tab per active
+-- extension and serves rows from its `data_table`. Core stays domain-agnostic:
+-- it knows nothing about any specific extension, only this generic registry.
+CREATE TABLE IF NOT EXISTS extensions (
+    name           VARCHAR(32)  NOT NULL,               -- e.g. 'ingest'
+    label          VARCHAR(64)  NOT NULL,               -- nav-tab label, e.g. 'Ingest'
+    version        VARCHAR(32)  NULL,
+    data_table     VARCHAR(64)  NULL,                   -- table the UI view is served from
+    host           VARCHAR(128) NULL,
+    pid            INT          NULL,
+    status         VARCHAR(16)  NOT NULL DEFAULT 'active',
+    last_heartbeat DATETIME     NOT NULL,               -- tab shown while this is recent
+    started_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (name)
+) ENGINE=InnoDB;
+
 -- Migrations for existing databases (idempotent; MariaDB IF NOT EXISTS).
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NULL;
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS config   TEXT        NULL;

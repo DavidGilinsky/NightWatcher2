@@ -250,6 +250,26 @@ struct ReadingRow {
     std::string raw_line;
 };
 
+// A registered optional-tool extension (contributes a web-UI tab while running).
+struct ExtensionRow {
+    std::string name;
+    std::string label;
+    std::string version;
+    std::string data_table;         // table this extension's view is served from
+    std::string host;
+    std::optional<int> pid;
+    std::string status;             // "active" | "stopped"
+    std::string last_heartbeat;     // UTC "YYYY-MM-DD HH:MM:SS"
+    std::string started_at;
+    long long heartbeat_age_s = 0;  // seconds since last_heartbeat (computed)
+};
+
+// Generic result of query_recent(): column names + null-aware string cells.
+struct TableData {
+    std::vector<std::string> columns;
+    std::vector<std::vector<std::optional<std::string>>> rows;
+};
+
 // A single MariaDB connection with domain helpers. Not thread-safe; use one
 // Database per thread.
 class Database {
@@ -370,6 +390,14 @@ public:
 
     // Calibration/config history for a sensor, most-recent first.
     std::vector<ConfigLogRow> config_log(const std::string& sensor_id, int limit = 50);
+
+    // --- Extensions (generic registry for optional tools' web-UI tabs) ---
+    std::vector<ExtensionRow> extensions();
+    std::optional<ExtensionRow> find_extension(const std::string& name);
+    // Recent rows of an extension's data table, generically (columns discovered
+    // at query time). `table` MUST be a validated identifier; the caller passes
+    // a data_table read from the extensions registry.
+    TableData query_recent(const std::string& table, int limit = 200);
 
 private:
     struct Impl;

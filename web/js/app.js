@@ -2,10 +2,11 @@
 // Author:        David Gilinsky
 // File:          web/js/app.js
 // Purpose:       NightWatcher2 web UI: login flow + dashboard, sensor/weather
-//                CRUD, readings query + graph, events, users, and database
-//                maintenance, all against the /api/v1 API.
+//                CRUD, readings query + graph, events, users, database
+//                maintenance, and dynamic tabs for registered extensions, all
+//                against the /api/v1 API.
 // Created:       2026-07-18
-// Last Modified: 2026-07-21
+// Last Modified: 2026-07-22
 // Version:       0.1.0
 // License:       GPL-3.0-or-later
 // ---------------------------------------------------------------------------
@@ -1347,6 +1348,73 @@ const VIEWS = {
   server: { label: 'Server', admin: true, render: viewServer },
 };
 
+// ---- dynamic extension tabs ------------------------------------------------
+// Optional companion tools (e.g. nightwatcher-ingest) register in the daemon's
+// `extensions` table; each active one contributes a tab that renders its data
+// table generically. Nothing here is specific to any one extension.
+let extLiveTimer = null;
+function stopExtLive() { if (extLiveTimer) { clearInterval(extLiveTimer); extLiveTimer = null; } }
+
+function fmtCell(col, val) {
+  if (val === null || val === undefined) return '—';
+  const c = col.toLowerCase();
+  if ((c.endsWith('_utc') || c.endsWith('_at') || c.includes('heartbeat')) &&
+      /^\d{4}-\d\d-\d\d/.test(String(val))) return fmtLocalTs(val);
+  return String(val);
+}
+
+async function viewExtension(name, label) {
+  stopExtLive();
+  const frag = document.createDocumentFragment();
+  frag.append(el('h2', {}, label || name));
+  const stat = el('span', { class: 'muted' });
+  // Live auto-refresh preference persists per extension until manually cleared,
+  // so leaving the tab (or refreshing the page) keeps it set.
+  const liveKey = 'nw_ext_live_' + name;
+  const livePref = localStorage.getItem(liveKey) === '1';
+  const live = el('input', { type: 'checkbox', ...(livePref ? { checked: 'checked' } : {}) });
+  const box = el('div', { class: 'scroll' });
+  const load = async () => {
+    try {
+      const d = await api('GET', '/extensions/' + encodeURIComponent(name) + '/data?limit=200');
+      const cols = (d.columns || []).map(c => ({ label: c, render: r => fmtCell(c, r[c]) }));
+      box.innerHTML = '';
+      box.append((d.rows && d.rows.length)
+        ? table(cols, d.rows) : el('p', { class: 'muted' }, 'No activity yet.'));
+      stat.textContent = (d.rows ? d.rows.length : 0) + ' rows';
+    } catch (e) { box.innerHTML = ''; box.append(msg('err', e.message)); }
+  };
+  const startLive = () => {          // (re)start the poll iff the box is checked
+    stopExtLive();
+    if (live.checked) extLiveTimer = setInterval(() => {
+      if (!box.isConnected) { stopExtLive(); return; }
+      if (!document.hidden) load();
+    }, 5000);
+  };
+  live.addEventListener('change', () => {
+    localStorage.setItem(liveKey, live.checked ? '1' : '0');
+    startLive();
+  });
+  frag.append(el('div', { style: 'display:flex;gap:.7rem;align-items:center;margin:.2rem 0 .7rem' },
+    el('button', { class: 'btn ghost sm', onclick: load }, 'Refresh'),
+    el('label', { class: 'muted', style: 'display:flex;gap:.3rem;align-items:center' }, live, 'Live'),
+    stat));
+  frag.append(box);
+  await load();
+  startLive();                       // restore Live polling if it was left on
+  return frag;
+}
+
+async function loadExtensionViews() {
+  for (const k of Object.keys(VIEWS)) if (k.startsWith('ext:')) delete VIEWS[k];
+  let exts = [];
+  try { exts = await api('GET', '/extensions'); } catch (_) { exts = []; }
+  for (const e of (exts || [])) {
+    if (!e || !e.active) continue;
+    VIEWS['ext:' + e.name] = { label: e.label || e.name, render: () => viewExtension(e.name, e.label) };
+  }
+}
+
 function currentViewFromHash() {
   const h = (location.hash || '').replace('#', '');
   return VIEWS[h] ? h : 'dashboard';
@@ -1462,6 +1530,7 @@ async function boot() {
   try {
     const me = await api('GET', '/me', undefined, { noAuthRedirect: true });
     state.user = me;
+    await loadExtensionViews();      // inject any active extension tabs before the nav renders
     renderApp();
   } catch (_) {
     showLogin();

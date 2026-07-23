@@ -886,7 +886,7 @@ std::vector<TableCount> Database::schema_status() {
                                          "weather_stations", "weather_readings",
                                          "users",            "sessions",
                                          "export_targets",   "export_log",
-                                         "settings"};
+                                         "settings",         "extensions"};
     std::vector<TableCount> out;
     for (const char* t : kKnown) {
         TableCount tc;
@@ -1047,6 +1047,76 @@ void Database::delete_session(const std::string& token) {
 
 void Database::delete_expired_sessions() {
     exec("DELETE FROM sessions WHERE expires_at <= UTC_TIMESTAMP()");
+}
+
+// --- Extensions (generic registry for optional tools' web-UI tabs) ---
+namespace {
+const char* const kExtCols =
+    "name, label, version, data_table, host, pid, status, last_heartbeat, started_at, "
+    "TIMESTAMPDIFF(SECOND, last_heartbeat, UTC_TIMESTAMP())";
+
+ExtensionRow extension_from_row(MYSQL_ROW row) {
+    ExtensionRow e;
+    e.name = row[0] ? row[0] : "";
+    e.label = row[1] ? row[1] : "";
+    e.version = row[2] ? row[2] : "";
+    e.data_table = row[3] ? row[3] : "";
+    e.host = row[4] ? row[4] : "";
+    if (row[5]) e.pid = std::atoi(row[5]);
+    e.status = row[6] ? row[6] : "";
+    e.last_heartbeat = row[7] ? row[7] : "";
+    e.started_at = row[8] ? row[8] : "";
+    e.heartbeat_age_s = row[9] ? std::atoll(row[9]) : 0;
+    return e;
+}
+}  // namespace
+
+std::vector<ExtensionRow> Database::extensions() {
+    exec(std::string("SELECT ") + kExtCols + " FROM extensions ORDER BY name");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr)
+        throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::vector<ExtensionRow> out;
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) out.push_back(extension_from_row(row));
+    mysql_free_result(res);
+    return out;
+}
+
+std::optional<ExtensionRow> Database::find_extension(const std::string& name) {
+    exec(std::string("SELECT ") + kExtCols + " FROM extensions WHERE name='" + esc(name) + "'");
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr)
+        throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    std::optional<ExtensionRow> out;
+    if (MYSQL_ROW row = mysql_fetch_row(res)) out = extension_from_row(row);
+    mysql_free_result(res);
+    return out;
+}
+
+TableData Database::query_recent(const std::string& table, int limit) {
+    if (limit < 1) limit = 1;
+    if (limit > 5000) limit = 5000;
+    // `table` is a bare identifier validated by the caller; backtick-quote it.
+    exec("SELECT * FROM `" + table + "` ORDER BY id DESC LIMIT " + std::to_string(limit));
+    MYSQL_RES* res = mysql_store_result(impl_->conn);
+    if (res == nullptr)
+        throw std::runtime_error(std::string("store_result: ") + mysql_error(impl_->conn));
+    TableData out;
+    const unsigned int nf = mysql_num_fields(res);
+    MYSQL_FIELD* fields = mysql_fetch_fields(res);
+    for (unsigned int i = 0; i < nf; ++i)
+        out.columns.emplace_back(fields[i].name ? fields[i].name : "");
+    MYSQL_ROW row;
+    while ((row = mysql_fetch_row(res)) != nullptr) {
+        std::vector<std::optional<std::string>> cells;
+        cells.reserve(nf);
+        for (unsigned int i = 0; i < nf; ++i)
+            cells.push_back(row[i] ? std::optional<std::string>(row[i]) : std::nullopt);
+        out.rows.push_back(std::move(cells));
+    }
+    mysql_free_result(res);
+    return out;
 }
 
 }  // namespace nightwatcher::db
