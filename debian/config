@@ -1,0 +1,13 @@
+#!/bin/sh
+# debconf config script: ask NightWatcher's install-time configuration questions.
+set -e
+. /usr/share/debconf/confmodule
+
+db_input high   nightwatcher/db_password || true
+db_input medium nightwatcher/db_host     || true
+db_input high   nightwatcher/db_create   || true
+db_input high   nightwatcher/api_bind    || true
+db_input medium nightwatcher/api_port    || true
+db_input medium nightwatcher/api_tls     || true
+db_input medium nightwatcher/start_now   || true
+db_go || true
