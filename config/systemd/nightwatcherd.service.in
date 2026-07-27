@@ -30,6 +30,11 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
+# Writable, service-owned, persistent state dir (/var/lib/nightwatcher) for the
+# self-signed TLS cert -- ProtectSystem=strict makes /etc read-only, so the cert
+# cannot be generated under /etc/nightwatcher/tls.
+StateDirectory=nightwatcher
+StateDirectoryMode=0700
 # SQM-LU (USB serial) access: the DynamicUser is put in the dialout group so it
 # can open /dev/ttyUSB* (root:dialout 0660). Comment out if you use TCP only.
 SupplementaryGroups=dialout
