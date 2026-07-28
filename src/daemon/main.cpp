@@ -118,19 +118,19 @@ int main(int argc, char** argv) {
     sigaddset(&sigs, SIGUSR1);  // "Restart & apply": rebind the API server
     pthread_sigmask(SIG_BLOCK, &sigs, nullptr);
 
-    // Verify the database is reachable and record startup.
-    try {
-        db::Database dbh(db_cfg);
-        dbh.insert_event("daemon", "info", "started",
-                         std::string("nightwatcherd ") + NIGHTWATCHER_VERSION);
-    } catch (const std::exception& e) {
-        log_error(std::string("cannot connect to database: ") + e.what());
-        return 1;
-    }
-    log_info(std::string("nightwatcherd ") + NIGHTWATCHER_VERSION + " starting (db " +
-             db_cfg.user + "@" + db_cfg.host + "/" + db_cfg.database + ")");
-
     // Ensure the schema exists (idempotent) if a schema file is configured.
+    //
+    // This runs before the startup event below, which writes to `events`. On a
+    // database that exists but holds no tables yet — precisely what this
+    // package's own debconf setup creates, and what an appliance image creates
+    // on first boot — recording that event throws, the daemon exits 1, and
+    // systemd restarts it into the same failure indefinitely, never reaching
+    // the step that would have created the table it needs. Ordering the schema
+    // first lets a fresh database bootstrap itself, which is what the daemon
+    // has always been documented to do.
+    //
+    // A genuinely unreachable database still fails fast: this block only warns,
+    // and the connection check immediately below exits on it.
     if (!cfg.schema_file.empty()) {
         try {
             std::ifstream in(cfg.schema_file);
@@ -144,6 +144,18 @@ int main(int argc, char** argv) {
             log_warn(std::string("schema ensure failed: ") + e.what());
         }
     }
+
+    // Verify the database is reachable and record startup.
+    try {
+        db::Database dbh(db_cfg);
+        dbh.insert_event("daemon", "info", "started",
+                         std::string("nightwatcherd ") + NIGHTWATCHER_VERSION);
+    } catch (const std::exception& e) {
+        log_error(std::string("cannot connect to database: ") + e.what());
+        return 1;
+    }
+    log_info(std::string("nightwatcherd ") + NIGHTWATCHER_VERSION + " starting (db " +
+             db_cfg.user + "@" + db_cfg.host + "/" + db_cfg.database + ")");
     // Seed the initial admin user if there are none yet.
     try {
         db::Database dbh(db_cfg);
