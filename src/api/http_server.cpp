@@ -751,7 +751,8 @@ void HttpServer::start() {
             send(res, 201, s ? to_json(*s) : json{{"id", id}});
         } catch (const std::exception& e) { send_err(res, 500, e.what()); }
     });
-    srv.Patch(R"(/api/v1/sensors/([^/]+))", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+    srv.Patch(R"(/api/v1/sensors/([^/]+))",
+              [dbc, token, on_reload](const httplib::Request& req, httplib::Response& res) {
         if (!require_auth(req, res, token, dbc, true)) return;
         json body;
         try { body = json::parse(req.body); } catch (...) { send_err(res, 400, "invalid JSON"); return; }
@@ -763,7 +764,20 @@ void HttpServer::start() {
             }
             const auto s = db.find_sensor(req.matches[1]);
             send(res, 200, s ? to_json(*s) : json::object());
-        } catch (const std::exception& e) { send_err(res, 500, e.what()); }
+        } catch (const std::exception& e) { send_err(res, 500, e.what()); return; }
+        // Edits that change how or how often a sensor is polled have to reach
+        // the running daemon, which holds its own device list and timers.
+        // Without this, a new poll interval is written to the database and
+        // silently ignored until something else forces a reload, and an edited
+        // address keeps being polled at the old one. Only the fields that
+        // affect polling trigger it: renaming a sensor or fixing its notes
+        // should not restart its timer.
+        for (const char* k : {"poll_interval_s", "transport", "address", "status"}) {
+            if (body.contains(k)) {
+                if (on_reload) on_reload();
+                break;
+            }
+        }
     });
     srv.Delete(R"(/api/v1/sensors/([^/]+)/readings)",
                [dbc, token](const httplib::Request& req, httplib::Response& res) {
