@@ -1,0 +1,123 @@
+# ---------------------------------------------------------------------------
+# Author:        David Gilinsky
+# File:          .github/workflows/release.yml
+# Purpose:       Tag-triggered release: build the amd64 and arm64 .deb packages,
+#                publish them on a GitHub release with a SHA256SUMS manifest so
+#                downstream projects (NightWatcher-Pi) can pin and verify an
+#                exact package version instead of scraping CI artifacts.
+# Created:       2026-07-27
+# Last Modified: 2026-07-27
+# Version:       0.1.0
+# License:       GPL-3.0-or-later
+# ---------------------------------------------------------------------------
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and release (e.g. v0.1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # The tag is the source of truth for the release, but CPack takes its version
+  # from project(VERSION) in CMakeLists.txt. Fail early and loudly when the two
+  # disagree rather than publishing a v0.2.0 release full of 0.1.0 packages.
+  check-version:
+    name: Check tag matches project version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - id: v
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          tag_ver="${tag#v}"
+          proj_ver=$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' CMakeLists.txt | head -1)
+          echo "tag=$tag_ver project=$proj_ver"
+          if [ "$tag_ver" != "$proj_ver" ]; then
+            echo "::error::tag $tag implies version $tag_ver but CMakeLists.txt declares $proj_ver"
+            exit 1
+          fi
+          echo "version=$tag_ver" >> "$GITHUB_OUTPUT"
+
+  package:
+    name: Package (.deb, ${{ matrix.arch }})
+    needs: check-version
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Install build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake libmariadb-dev libssl-dev
+      # Same payload-only build as CI: the package's postinst creates the
+      # symlinks, seeds /etc, and enables the service.
+      - name: Configure
+        run: cmake -B pkg -DNW_INSTALL_SYSTEM_LINKS=OFF -DNW_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      - name: Build
+        run: cmake --build pkg --parallel
+      - name: Package
+        run: cd pkg && cpack -G DEB
+      - name: Install and verify integration
+        run: |
+          sudo apt-get install -y ./pkg/nightwatcher_*_${{ matrix.arch }}.deb
+          test -x /usr/local/nightwatcher/bin/nightwatcherd
+          test -L /usr/local/bin/sqmctl
+          sqmctl --version
+          test -f /etc/nightwatcher/nightwatcher.conf
+          test -L /etc/systemd/system/nightwatcherd.service
+          sudo apt-get purge -y nightwatcher
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightwatcher-${{ matrix.arch }}-deb
+          path: pkg/nightwatcher_*.deb
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [ check-version, package ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+      - name: Collect packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: nightwatcher-*-deb
+          merge-multiple: true
+          path: dist
+      # One manifest over the whole release: NightWatcher-Pi pins a version and
+      # verifies the .deb against this before it ever enters an image.
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum nightwatcher_*.deb | tee SHA256SUMS
+          ls -l
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$tag" \
+            --title "NightWatcher2 $tag" \
+            --generate-notes \
+            dist/nightwatcher_*.deb dist/SHA256SUMS
