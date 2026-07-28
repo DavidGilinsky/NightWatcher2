@@ -21,6 +21,9 @@
 #include <thread>
 #include <utility>
 
+#include <sys/socket.h>  // AF_UNIX, for the platform helper socket
+#include <unistd.h>      // access()
+
 #include "discovery.hpp"
 #include "export_runner.hpp"
 #include "exporter.hpp"
@@ -436,6 +439,58 @@ std::string auth_user(const httplib::Request& req, const std::string& token,
     return "";
 }
 
+// ---- platform integration socket -------------------------------------------
+// An appliance image (NightWatcher-Pi today) may run a small privileged helper
+// owning the host configuration this daemon deliberately cannot touch from
+// inside its sandbox: Wi-Fi, removable media, the system clock. Where that
+// helper's unix socket exists, the routes below proxy admin-authenticated
+// requests to it, and the web UI grows a tab whose code the helper itself
+// serves. Everywhere else the socket is absent, every platform route 404s, and
+// nothing about the daemon's behaviour changes. Core knows no appliance
+// specifics; it only forwards.
+
+// NW_PLATFORM_SOCKET overrides the path for development. There is deliberately
+// no config-file key: this is a property of the image, not of the site.
+std::string platform_socket_path() {
+    const char* p = std::getenv("NW_PLATFORM_SOCKET");
+    if (p && *p) return p;
+    return "/run/nightwatcher-platform.sock";
+}
+
+bool platform_present() { return ::access(platform_socket_path().c_str(), F_OK) == 0; }
+
+// Forward one request to the helper and copy its reply back. `path` is
+// helper-relative and comes from the URL, so it is accepted only when it looks
+// like a simple absolute path.
+void platform_proxy(const httplib::Request& req, httplib::Response& res, const std::string& path) {
+    if (!platform_present()) { send_err(res, 404, "no platform helper on this system"); return; }
+    if (path.empty() || path[0] != '/' || path.find("..") != std::string::npos) {
+        send_err(res, 400, "invalid platform path");
+        return;
+    }
+    // Carry the original query string through untouched.
+    std::string target = path;
+    const auto q = req.target.find('?');
+    if (q != std::string::npos) target += req.target.substr(q);
+
+    httplib::Client cli(platform_socket_path());
+    cli.set_address_family(AF_UNIX);
+    cli.set_connection_timeout(5, 0);
+    cli.set_read_timeout(45, 0);  // a Wi-Fi scan or a USB sync is not instant
+    cli.set_write_timeout(10, 0);
+
+    std::string ctype = req.get_header_value("Content-Type");
+    if (ctype.empty()) ctype = "application/json";
+    const httplib::Result r =
+        (req.method == "POST") ? cli.Post(target, req.body, ctype) : cli.Get(target);
+    if (!r) { send_err(res, 502, "platform helper unreachable"); return; }
+
+    res.status = r->status;
+    std::string rtype = r->get_header_value("Content-Type");
+    if (rtype.empty()) rtype = "application/json";
+    res.set_content(r->body, rtype);
+}
+
 }  // namespace
 
 HttpServer::HttpServer(ApiConfig cfg) : impl_(std::make_unique<Impl>(std::move(cfg))) {}
@@ -672,6 +727,24 @@ void HttpServer::start() {
                                         {"columns", data.columns}, {"rows", rows}});
                 } catch (const std::exception& e) { send_err(res, 500, e.what()); }
             });
+    // Platform helper (appliance images only; see platform_proxy above). The
+    // probe answers 404 wherever no helper socket exists, which is how the web
+    // UI decides whether to offer the tab at all. Everything here is admin-only:
+    // these routes reconfigure the host, not the site.
+    srv.Get("/api/v1/platform", [dbc, token](const httplib::Request& req, httplib::Response& res) {
+        if (!require_auth(req, res, token, dbc, true)) return;
+        platform_proxy(req, res, "/");
+    });
+    srv.Get(R"(/api/v1/platform/(.*))",
+            [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                if (!require_auth(req, res, token, dbc, true)) return;
+                platform_proxy(req, res, "/" + std::string(req.matches[1]));
+            });
+    srv.Post(R"(/api/v1/platform/(.*))",
+             [dbc, token](const httplib::Request& req, httplib::Response& res) {
+                 if (!require_auth(req, res, token, dbc, true)) return;
+                 platform_proxy(req, res, "/" + std::string(req.matches[1]));
+             });
     srv.Get("/api/v1/weather-stations", [dbc](const httplib::Request&, httplib::Response& res) {
         try {
             db::Database db(dbc);
