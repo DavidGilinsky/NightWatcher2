@@ -1514,11 +1514,25 @@ function showChangePassword(forced) {
   const f = el('form', { class: 'form' });
   const cur = el('input', { type: 'password', placeholder: 'current password' });
   const nw = el('input', { type: 'password', placeholder: 'new password' });
-  f.append(el('label', {}, 'Current password', cur), el('label', {}, 'New password', nw), err,
+  // Typed twice, because a password that is set once and mistyped is a
+  // password nobody knows. On the forced change this is the very credential
+  // that replaces the default, so a typo locks the operator out of an
+  // installation that may be an hour's drive away.
+  const nw2 = el('input', { type: 'password', placeholder: 'repeat new password' });
+  f.append(el('label', {}, 'Current password', cur),
+    el('label', {}, 'New password', nw),
+    el('label', {}, 'Confirm new password', nw2), err,
     el('button', { class: 'btn', type: 'submit' }, 'Change password'));
   f.addEventListener('submit', async e => {
     e.preventDefault();
     err.innerHTML = '';
+    if (!nw.value) { err.append(msg('err', 'Enter a new password.')); nw.focus(); return; }
+    if (nw.value !== nw2.value) {
+      err.append(msg('err', 'The new passwords do not match.'));
+      nw2.value = '';
+      nw2.focus();
+      return;
+    }
     try { await api('POST', '/me/password', { current_password: cur.value, new_password: nw.value }); boot(); }
     catch (ex) { err.append(msg('err', ex.message)); }
   });
