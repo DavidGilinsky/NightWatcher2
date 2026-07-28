@@ -1415,6 +1415,30 @@ async function loadExtensionViews() {
   }
 }
 
+// ---- platform (appliance) tab ----------------------------------------------
+// An appliance image (NightWatcher-Pi) may run a privileged host helper behind
+// /api/v1/platform. Where one answers, it names its own tab and serves the
+// module that renders it, so no appliance specifics live in core. Everywhere
+// else the probe 404s and the UI is exactly as it was.
+async function loadPlatformView() {
+  delete VIEWS.platform;
+  if (!isAdmin()) return;                       // the platform routes are admin-only
+  let info = null;
+  try { info = await api('GET', '/platform', undefined, { noAuthRedirect: true }); }
+  catch (_) { return; }                         // no helper on this system: no tab
+  // The helper names its own UI module; keep it to a plain file name so the
+  // import cannot be steered elsewhere.
+  if (!info || !info.ui || !/^[\w.-]+\.js$/.test(info.ui)) return;
+  VIEWS.platform = {
+    label: info.label || 'Platform',
+    admin: true,
+    render: async () => {
+      const mod = await import('/api/v1/platform/' + info.ui);
+      return mod.render();
+    },
+  };
+}
+
 function currentViewFromHash() {
   const h = (location.hash || '').replace('#', '');
   return VIEWS[h] ? h : 'dashboard';
@@ -1531,6 +1555,7 @@ async function boot() {
     const me = await api('GET', '/me', undefined, { noAuthRedirect: true });
     state.user = me;
     await loadExtensionViews();      // inject any active extension tabs before the nav renders
+    await loadPlatformView();        // and the appliance tab, where a host helper offers one
     renderApp();
   } catch (_) {
     showLogin();

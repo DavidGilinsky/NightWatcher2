@@ -317,6 +317,21 @@ deployment never sees any of it — the core ships no astrophotography or tool-s
 The WordPress connector below is a second companion, tied in through the export system rather
 than the extension registry.
 
+### Appliance platform helper
+
+An **appliance image** that ships NightWatcher (today
+[NightWatcher-Pi](https://github.com/DavidGilinsky/NightWatcher-Pi)) has to configure things the
+daemon deliberately cannot reach from inside its sandbox: Wi-Fi, removable media, the system clock.
+Such an image runs a small privileged helper on a unix socket at `/run/nightwatcher-platform.sock`
+(override with `NW_PLATFORM_SOCKET`). Where that socket exists, `/api/v1/platform` and
+`/api/v1/platform/<path>` proxy **admin-authenticated** requests to it, and the helper's probe
+response (`{name, label, ui}`) tells the web UI to add a tab whose ES module the helper itself
+serves at `/api/v1/platform/<ui>`. The panel rides the daemon's own origin, session, and
+certificate, so there is no second port and no second login.
+
+Where no such socket exists, which is every ordinary install, those routes return 404 and no tab
+appears. The core carries no appliance-specific code; it only forwards.
+
 ## Data export
 
 Export **targets** live in the database (`export_targets`) and are run by the daemon on a schedule

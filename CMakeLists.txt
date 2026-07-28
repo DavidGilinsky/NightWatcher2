@@ -254,6 +254,11 @@ if(NW_BUILD_TESTS)
         target_link_libraries(tls_cert_test PRIVATE nw_api OpenSSL::Crypto)
         add_test(NAME tls_cert_test COMMAND tls_cert_test)
 
+        # Platform helper proxy: stub helper on a unix socket, no database.
+        add_executable(platform_test tests/platform_test.cpp)
+        target_link_libraries(platform_test PRIVATE nw_api)
+        add_test(NAME platform_test COMMAND platform_test)
+
         add_executable(weather_test tests/weather_test.cpp)
         target_link_libraries(weather_test PRIVATE nw_weather)
         add_test(NAME weather_test COMMAND weather_test)
