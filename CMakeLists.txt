@@ -3,14 +3,14 @@
 # File:          CMakeLists.txt
 # Purpose:       Top-level CMake build: targets, options, install rules, tests.
 # Created:       2026-07-18
-# Last Modified: 2026-07-18
-# Version:       0.1.0
+# Last Modified: 2026-07-28
+# Version:       0.1.1
 # License:       GPL-3.0-or-later
 # ---------------------------------------------------------------------------
 cmake_minimum_required(VERSION 3.16)
 
 project(NightWatcher2
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "Tools to interface Unihedron Sky Quality Meters with the Dark Sky Network"
     HOMEPAGE_URL "https://github.com/DavidGilinsky/NightWatcher2"
     LANGUAGES C CXX)
