@@ -22,6 +22,18 @@
 -- The database and application user are created by setup.sql (run that first).
 USE nightwatcher;
 
+-- Every table below states its character set and collation explicitly rather
+-- than inheriting the database default. That default is not stable: MariaDB
+-- 11.5 changed the default collation for utf8mb4 from utf8mb4_general_ci to
+-- utf8mb4_uca1400_ai_ci, so a database created on Debian Trixie (MariaDB 11.8)
+-- and one created on an older server disagree. Tables created under different
+-- defaults cannot be joined by a foreign key -- "Field type or character set
+-- for column 'sensor_id' does not match referenced column 'id'" -- which on a
+-- fresh install stops the schema dead at export_targets and leaves the daemon
+-- unable to read its device list. Naming the collation here makes the schema
+-- identical on every server, and matches what existing installations already
+-- hold.
+
 -- One row per Sky Quality Meter / station.
 CREATE TABLE IF NOT EXISTS sensors (
     id              VARCHAR(32)  NOT NULL,               -- DSN-style id, e.g. 'DSN003'
@@ -43,7 +55,7 @@ CREATE TABLE IF NOT EXISTS sensors (
     notes           TEXT         NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- One row per SQM reading (rx / ux / interval report).
 CREATE TABLE IF NOT EXISTS readings (
@@ -64,7 +76,7 @@ CREATE TABLE IF NOT EXISTS readings (
     KEY idx_sensor_ts (sensor_id, ts_utc),
     CONSTRAINT fk_readings_sensor FOREIGN KEY (sensor_id)
         REFERENCES sensors (id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Configuration / calibration snapshots and changes (from 'cx', interval settings, etc.).
 CREATE TABLE IF NOT EXISTS config_log (
@@ -87,7 +99,7 @@ CREATE TABLE IF NOT EXISTS config_log (
     KEY idx_cfg_sensor_ts (sensor_id, ts_utc),
     CONSTRAINT fk_config_sensor FOREIGN KEY (sensor_id)
         REFERENCES sensors (id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Operational event log: device up/down, connection errors, daemon lifecycle.
 -- device_id is a free reference (no FK) so events survive device deletion and
@@ -104,7 +116,7 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (id),
     KEY idx_events_ts (ts_utc),
     KEY idx_events_device_ts (device_id, ts_utc)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Separate weather stations (e.g. Ambient Weather WS-2000) co-located with SQMs.
 -- Polling is a future module; the tables exist now so no migration is needed later.
@@ -127,7 +139,7 @@ CREATE TABLE IF NOT EXISTS weather_stations (
     notes           TEXT         NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- One row per weather observation. Stored units are metric/SI; ingest converts.
 CREATE TABLE IF NOT EXISTS weather_readings (
@@ -155,7 +167,7 @@ CREATE TABLE IF NOT EXISTS weather_readings (
     KEY idx_wx_station_ts (station_id, ts_utc),
     CONSTRAINT fk_weather_station FOREIGN KEY (station_id)
         REFERENCES weather_stations (id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Web-UI / API users. Passwords are stored as PBKDF2-HMAC-SHA256 (salted); the
 -- daemon seeds an 'admin' account on first start if this table is empty.
@@ -168,7 +180,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at           DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     UNIQUE KEY uq_users_username (username)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Login sessions. token is a random hex string stored in a cookie.
 CREATE TABLE IF NOT EXISTS sessions (
@@ -180,7 +192,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     KEY idx_sessions_user (user_id),
     CONSTRAINT fk_sessions_user FOREIGN KEY (user_id)
         REFERENCES users (id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Data-export targets: push a sensor's readings to an external network (Dark Sky
 -- Network Google Drive, Globe at Night, ...). Modular like the weather providers:
@@ -203,7 +215,7 @@ CREATE TABLE IF NOT EXISTS export_targets (
     KEY idx_export_sensor (sensor_id),
     CONSTRAINT fk_export_sensor FOREIGN KEY (sensor_id)
         REFERENCES sensors (id) ON DELETE CASCADE
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- One row per export run (audit trail). target_id is a free reference (no FK) so
 -- the log survives target deletion, like the events table.
@@ -221,7 +233,7 @@ CREATE TABLE IF NOT EXISTS export_log (
     created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id),
     KEY idx_export_log_target_ts (target_id, ts_utc)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Runtime settings editable from the web UI (key/value), e.g. the API bind
 -- address and port. The daemon reads these at startup (overriding the config
@@ -231,7 +243,7 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT        NULL,
     updated_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (name)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Optional-tool registry. A companion tool (e.g. nightwatcher-ingest) registers
 -- itself here and heartbeats while running; the web UI shows a tab per active
@@ -248,7 +260,7 @@ CREATE TABLE IF NOT EXISTS extensions (
     last_heartbeat DATETIME     NOT NULL,               -- tab shown while this is recent
     started_at     DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (name)
-) ENGINE=InnoDB;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Migrations for existing databases (idempotent; MariaDB IF NOT EXISTS).
 ALTER TABLE weather_stations ADD COLUMN IF NOT EXISTS provider VARCHAR(32) NULL;
