@@ -3,8 +3,8 @@
   File:          README.md
   Purpose:       Project overview, build instructions, and repository layout.
   Created:       2026-07-18
-  Last Modified: 2026-07-20
-  Version:       0.1.0
+  Last Modified: 2026-08-01
+  Version:       0.1.2
   License:       GPL-3.0-or-later
 -->
 
@@ -20,7 +20,7 @@ that data through an API and a web UI. It also polls co-located **weather statio
 automatically **exports** data on a schedule — uploading to the DSN shared storage, and/or
 pushing to a companion WordPress site for public display.
 
-It also doubles as a small hub for a dark-sky observing site. A generic **extension
+It also doubles as an image-file ingestion point for an observatory or observing site. A generic **extension
 registry** lets companion tools plug into the same web UI while they run, without adding
 anything non-SQM to the core — the first being
 **[nightwatcher-ingest](https://github.com/DavidGilinsky/nightwatcher-ingest)**, a FITS
@@ -313,9 +313,17 @@ deployment never sees any of it — the core ships no astrophotography or tool-s
   archive tree. Pointed at NightWatcher, it **stamps each frame with the sky-brightness reading
   nearest the moment it was taken** and registers an **Ingest** tab that shows its transfer
   history live.
+- **[NightWatcher-AirWatcher](https://github.com/DavidGilinsky/NightWatcher-AirWatcher)** — a
+  C++ daemon that pulls raw FITS frames off **ZWO ASIAir** devices over their SMB share and drops
+  them into the `nightwatcher-ingest` landing directory, replacing a generic SMB sync tool (e.g.
+  GoodSync) with a purpose-built copier that adds copy scheduling, optional deletion, subnet
+  discovery, and its own web UI. It registers a read-only **AirWatcher** tab showing each
+  configured ASIAir, its address, total Autorun frame count, and how many remain to copy. The two
+  companions chain into one path: **ASIAir → AirWatcher → `incoming/` → nightwatcher-ingest →
+  archive.**
 
-The WordPress connector below is a second companion, tied in through the export system rather
-than the extension registry.
+The WordPress connector and the appliance platform helper below are further companions, tied in
+through the export system and the platform socket rather than the extension registry.
 
 ### Appliance platform helper
 
